@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -255,7 +256,13 @@ func (m *AppModel) navigateTo(target PageID) tea.Cmd {
 }
 
 func (m *AppModel) setupDeps(site *config.SiteConfig) {
-	client := api.NewClient(site, m.config.API)
+	dir := filepath.Dir(m.cfgPath)
+	if dir == "." || dir == "" {
+		if d, err := config.ConfigDir(); err == nil {
+			dir = d
+		}
+	}
+	client := api.NewClient(site, m.config.API, api.WithConfigDir(dir))
 	c := cache.New[cache.SiteKey, interface{}]()
 	m.deps = PageDeps{
 		Site:  site,

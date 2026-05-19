@@ -42,6 +42,15 @@ Editor roles work. Subscriber and Contributor roles will fail with a 403 error.
 
 The Ultimate Security plugin must be **installed and active** on the site.
 
+## Local Development
+
+`uscli` supports local WordPress sites (Docker, wp-env, Local by Flywheel,
+Valet, `php -S`). For self-signed dev certs, set `ca_cert` to your dev CA PEM
+file (mkcert, Traefik, Local root) instead of disabling SSL verification.
+Plaintext `http://` to loopback/dev hosts is allowed without warnings. For
+Application Passwords over HTTP, WordPress requires
+`define('WP_ENVIRONMENT_TYPE', 'local');` in `wp-config.php`.
+
 ## First Run
 
 Run `uscli` with no arguments:
@@ -58,6 +67,7 @@ On first launch (or when no sites are configured), the **Connect** form opens:
 | Site URL | Yes | Site root — not `/wp-admin` or `/wp-login.php` |
 | Username | Yes | WordPress username |
 | Application Password | Yes | Masked input; spaces optional |
+| CA certificate path | No | PEM CA bundle for self-signed/dev certs |
 | Verify SSL | Yes | Leave on. Disabling shows a warning |
 
 ### Testing the Connection
@@ -145,6 +155,7 @@ For scripting and CI, you can override the first site via environment variables:
 | `USCLI_SITE_USERNAME` | First site username |
 | `USCLI_SITE_APP_PASSWORD` | First site Application Password |
 | `USCLI_VERIFY_SSL` | First site SSL verification (`true` or `false`) |
+| `USCLI_CA_CERT` | First site CA certificate PEM path |
 | `USCLI_THEME` | UI theme (`dark`, `light`, or `auto`) |
 | `USCLI_DEBUG` | Debug mode (`true` or `false`) |
 

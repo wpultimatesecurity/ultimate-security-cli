@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ var (
 	ErrMissingField   = errors.New("missing required field")
 	ErrInvalidTheme   = errors.New("invalid theme value")
 	ErrInvalidTimeout = errors.New("timeout out of range")
+	ErrInvalidCACert  = errors.New("invalid CA certificate")
 )
 
 type Config struct {
@@ -38,7 +40,8 @@ type SiteConfig struct {
 	URL         string `yaml:"url"`
 	Username    string `yaml:"username"`
 	AppPassword string `yaml:"app_password"`
-	VerifySSL   bool   `yaml:"verify_ssl"`
+	VerifySSL   *bool  `yaml:"verify_ssl"`
+	CACert      string `yaml:"ca_cert,omitempty"`
 }
 
 type UIConfig struct {
@@ -183,7 +186,7 @@ func normalizeURL(raw string) string {
 	return u
 }
 
-func validateSite(s SiteConfig, idx int, names map[string]bool) error {
+func validateSite(s SiteConfig, idx int, names map[string]bool, configDir string) error {
 	if s.Name == "" {
 		return fmt.Errorf("%w: site %d missing name", ErrMissingField, idx)
 	}
@@ -209,6 +212,19 @@ func validateSite(s SiteConfig, idx int, names map[string]bool) error {
 	if s.AppPassword == "" {
 		return fmt.Errorf("%w: site %q missing app_password", ErrMissingField, s.Name)
 	}
+	if s.CACert != "" {
+		p, err := s.ResolveCACertPath(configDir)
+		if err != nil {
+			return fmt.Errorf("%w: site %q ca_cert: %v", ErrInvalidCACert, s.Name, err)
+		}
+		pem, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("%w: site %q ca_cert unreadable: %v", ErrInvalidCACert, s.Name, err)
+		}
+		if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+			return fmt.Errorf("%w: site %q ca_cert has no parseable PEM", ErrInvalidCACert, s.Name)
+		}
+	}
 	return nil
 }
 
@@ -228,8 +244,12 @@ func validate(cfg *Config) error {
 	}
 
 	names := make(map[string]bool)
+	dir := ""
+	if cfg.path != "" {
+		dir = filepath.Dir(cfg.path)
+	}
 	for i, s := range cfg.Sites {
-		if err := validateSite(s, i, names); err != nil {
+		if err := validateSite(s, i, names, dir); err != nil {
 			return err
 		}
 	}
@@ -251,7 +271,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("USCLI_VERIFY_SSL"); v != "" {
 		ensureEnvSite(cfg)
-		cfg.Sites[0].VerifySSL = v == "true" || v == "1"
+		b := v == "true" || v == "1"
+		cfg.Sites[0].VerifySSL = &b
+	}
+	if v := os.Getenv("USCLI_CA_CERT"); v != "" {
+		ensureEnvSite(cfg)
+		cfg.Sites[0].CACert = v
 	}
 	if v := os.Getenv("USCLI_THEME"); v != "" {
 		cfg.UI.Theme = v
@@ -281,4 +306,29 @@ func (s *SiteConfig) MaskedPassword() string {
 		return ""
 	}
 	return "****"
+}
+
+func (s *SiteConfig) VerifyEnabled() bool {
+	if s.VerifySSL == nil {
+		return true
+	}
+	return *s.VerifySSL
+}
+
+func (s *SiteConfig) ResolveCACertPath(configDir string) (string, error) {
+	p := strings.TrimSpace(s.CACert)
+	if p == "" {
+		return "", nil
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+	}
+	if !filepath.IsAbs(p) && configDir != "" {
+		p = filepath.Join(configDir, p)
+	}
+	return filepath.Clean(p), nil
 }

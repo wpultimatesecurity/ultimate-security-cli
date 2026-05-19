@@ -18,13 +18,18 @@ type Error struct {
 	Message string
 	Status  int
 	Err     error
+	Hint    string
 }
 
 func (e *Error) Error() string {
+	base := e.Message
 	if e.Err != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.Err)
+		base = fmt.Sprintf("%s: %v", e.Message, e.Err)
 	}
-	return e.Message
+	if e.Hint != "" {
+		return base + "\nHint: " + e.Hint
+	}
+	return base
 }
 
 func (e *Error) Unwrap() error {

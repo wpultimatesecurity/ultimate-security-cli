@@ -22,6 +22,7 @@ type SetupPage struct {
 	username    string
 	appPassword string
 	verifySSL   bool
+	caCert      string
 	result      string
 	testing     bool
 	complete    bool
@@ -63,6 +64,11 @@ func (p *SetupPage) buildForm() {
 				Description("WordPress Application Password").
 				Value(&p.appPassword).
 				Password(true),
+			huh.NewInput().
+				Key("ca_cert").
+				Title("CA certificate path (optional)").
+				Description("PEM CA bundle to trust (mkcert/Traefik/Local root). Blank for public certs.").
+				Value(&p.caCert),
 			huh.NewConfirm().
 				Key("verify_ssl").
 				Title("Verify SSL").
@@ -124,6 +130,12 @@ func (p SetupPage) View() tea.View {
 	}
 
 	b.WriteString("\n\n")
+
+	if httpWarning := p.httpWarning(); httpWarning != "" {
+		b.WriteString(httpWarning)
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(theme.LabelStyle.Render("<ctrl+t> test connection  <ctrl+c> cancel"))
 
 	if p.result != "" {
@@ -137,6 +149,17 @@ func (p SetupPage) View() tea.View {
 	}
 
 	return tea.NewView(b.String())
+}
+
+func (p *SetupPage) httpWarning() string {
+	url := strings.TrimSpace(p.siteURL)
+	if !strings.HasPrefix(url, "http://") {
+		return ""
+	}
+	if config.IsLoopbackOrDevHost(url) {
+		return theme.StatusMutedStyle.Render("Local dev site detected — plaintext HTTP is allowed. WordPress needs WP_ENVIRONMENT_TYPE=local (or HTTPS) for Application Password auth over HTTP.")
+	}
+	return theme.StatusErrStyle.Render("Warning: http:// is insecure. Credentials are sent unencrypted. Use https:// for non-local sites.")
 }
 
 func (p *SetupPage) testConnection() tea.Cmd {
@@ -160,12 +183,14 @@ func (p *SetupPage) testConnection() tea.Cmd {
 			}
 		}
 
+		v := p.verifySSL
 		site := &config.SiteConfig{
 			Name:        name,
 			URL:         strings.TrimRight(url, "/"),
 			Username:    user,
 			AppPassword: pass,
-			VerifySSL:   p.verifySSL,
+			VerifySSL:   &v,
+			CACert:      strings.TrimSpace(p.caCert),
 		}
 		if site.Name == "" {
 			u := site.URL
@@ -178,7 +203,8 @@ func (p *SetupPage) testConnection() tea.Cmd {
 		}
 
 		apiCfg := config.DefaultConfig().API
-		client := api.NewClient(site, apiCfg)
+		dir, _ := config.ConfigDir()
+		client := api.NewClient(site, apiCfg, api.WithConfigDir(dir))
 
 		info, err := api.NewConnectionService(client).TestConnection(context.Background())
 		if err != nil {
