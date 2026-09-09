@@ -1,334 +1,69 @@
+// Package config loads the optional wpus configuration file and merges it
+// with command-line flags. Precedence: flags > environment > file > defaults.
+//
+// V1 intentionally keeps the surface small: fail_on, exclude paths, and
+// disabled checks.
 package config
 
 import (
-	"crypto/x509"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-var (
-	ErrNoSites        = errors.New("no sites configured")
-	ErrInvalidURL     = errors.New("invalid site URL")
-	ErrDuplicateName  = errors.New("duplicate site name")
-	ErrMissingField   = errors.New("missing required field")
-	ErrInvalidTheme   = errors.New("invalid theme value")
-	ErrInvalidTimeout = errors.New("timeout out of range")
-	ErrInvalidCACert  = errors.New("invalid CA certificate")
-)
-
-type Config struct {
-	Version     int          `yaml:"version"`
-	DefaultSite string       `yaml:"default_site"`
-	Sites       []SiteConfig `yaml:"sites"`
-	UI          UIConfig     `yaml:"ui"`
-	API         APIConfig    `yaml:"api"`
-	Debug       DebugConfig  `yaml:"debug"`
-
-	path string `yaml:"-"`
+// File is the on-disk configuration schema.
+type File struct {
+	// FailOn mirrors --fail-on: findings at or above this severity exit 1.
+	FailOn string `yaml:"fail_on,omitempty"`
+	// Exclude lists site paths to skip during automatic discovery.
+	Exclude []string `yaml:"exclude,omitempty"`
+	// Checks.Disabled lists check IDs to skip.
+	Checks struct {
+		Disabled []string `yaml:"disabled,omitempty"`
+	} `yaml:"checks,omitempty"`
 }
 
-type SiteConfig struct {
-	Name        string `yaml:"name"`
-	URL         string `yaml:"url"`
-	Username    string `yaml:"username"`
-	AppPassword string `yaml:"app_password"`
-	VerifySSL   *bool  `yaml:"verify_ssl"`
-	CACert      string `yaml:"ca_cert,omitempty"`
-}
-
-type UIConfig struct {
-	Theme           string        `yaml:"theme"`
-	AltScreen       bool          `yaml:"alt_screen"`
-	Mouse           bool          `yaml:"mouse"`
-	RefreshInterval time.Duration `yaml:"refresh_interval"`
-	DefaultPage     string        `yaml:"default_page"`
-}
-
-type APIConfig struct {
-	Timeout       time.Duration `yaml:"timeout"`
-	RetryAttempts int           `yaml:"retry_attempts"`
-	RetryDelay    time.Duration `yaml:"retry_delay"`
-}
-
-type DebugConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	LogPath string `yaml:"log_path"`
-	LogHTTP bool   `yaml:"log_http"`
-}
-
-func DefaultConfig() Config {
-	return Config{
-		Version: 1,
-		Sites:   []SiteConfig{},
-		UI: UIConfig{
-			Theme:           "dark",
-			AltScreen:       true,
-			Mouse:           true,
-			RefreshInterval: 60 * time.Second,
-			DefaultPage:     "dashboard",
-		},
-		API: APIConfig{
-			Timeout:       30 * time.Second,
-			RetryAttempts: 3,
-			RetryDelay:    time.Second,
-		},
-		Debug: DebugConfig{},
-	}
-}
-
-func Load(path string) (Config, error) {
-	cfg := DefaultConfig()
-	cfg.path = path
-
-	data, err := os.ReadFile(path)
+// Load reads a single config file. Missing file returns zero values and nil
+// error; a malformed file is an error (users must know their config is dead).
+func Load(path string) (*File, error) {
+	cfg := &File{}
+	data, err := os.ReadFile(path) //nolint:gosec // user-specified config path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
 		}
-		return cfg, fmt.Errorf("reading config: %w", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
-
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("parsing config: %w", err)
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
-
-	cfg.path = path
-	applyEnvOverrides(&cfg)
-
-	if err := validate(&cfg); err != nil {
-		return cfg, err
-	}
-
 	return cfg, nil
 }
 
-func (c *Config) Save() error {
-	if c.path == "" {
-		p, err := ConfigPath()
+// CandidatePaths lists config locations in precedence order:
+// ./.wpus.yaml, ./.wpus.yml, then the user config dir.
+func CandidatePaths(configDir string) []string {
+	return []string{
+		".wpus.yaml",
+		".wpus.yml",
+		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(configDir, "config.yml"),
+	}
+}
+
+// LoadFirst loads the first existing candidate config.
+func LoadFirst(configDir string) (*File, string, error) {
+	for _, p := range CandidatePaths(configDir) {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		cfg, err := Load(p)
 		if err != nil {
-			return err
+			return nil, "", err
 		}
-		c.path = p
+		return cfg, p, nil
 	}
-
-	dir := filepath.Dir(c.path)
-	if err := ensureDir(dir); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	data, err := yaml.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(dir, "uscli-config-*")
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("writing config: %w", err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting config permissions: %w", err)
-	}
-
-	if err := os.Rename(tmpName, c.path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("replacing config: %w", err)
-	}
-
-	return nil
-}
-
-func (c *Config) Path() string {
-	return c.path
-}
-
-func (c *Config) ActiveSite() (*SiteConfig, error) {
-	if len(c.Sites) == 0 {
-		return nil, ErrNoSites
-	}
-	if c.DefaultSite == "" {
-		return &c.Sites[0], nil
-	}
-	for i := range c.Sites {
-		if c.Sites[i].Name == c.DefaultSite {
-			return &c.Sites[i], nil
-		}
-	}
-	return &c.Sites[0], nil
-}
-
-func (c *Config) SetPath(path string) {
-	c.path = path
-}
-
-var invalidURLSuffixes = regexp.MustCompile(`(?i)/wp-admin/?$|/wp-login\.php/?$`)
-
-func normalizeURL(raw string) string {
-	u := strings.TrimSpace(raw)
-	u = strings.TrimRight(u, "/")
-	return u
-}
-
-func validateSite(s SiteConfig, idx int, names map[string]bool, configDir string) error {
-	if s.Name == "" {
-		return fmt.Errorf("%w: site %d missing name", ErrMissingField, idx)
-	}
-	if names[s.Name] {
-		return fmt.Errorf("%w: %q", ErrDuplicateName, s.Name)
-	}
-	names[s.Name] = true
-
-	if s.URL == "" {
-		return fmt.Errorf("%w: site %q missing url", ErrMissingField, s.Name)
-	}
-	u := normalizeURL(s.URL)
-	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-		return fmt.Errorf("%w: %q must start with http:// or https://", ErrInvalidURL, u)
-	}
-	if invalidURLSuffixes.MatchString(u) {
-		return fmt.Errorf("%w: %q looks like an admin URL, use the site root", ErrInvalidURL, u)
-	}
-
-	if s.Username == "" {
-		return fmt.Errorf("%w: site %q missing username", ErrMissingField, s.Name)
-	}
-	if s.AppPassword == "" {
-		return fmt.Errorf("%w: site %q missing app_password", ErrMissingField, s.Name)
-	}
-	if s.CACert != "" {
-		p, err := s.ResolveCACertPath(configDir)
-		if err != nil {
-			return fmt.Errorf("%w: site %q ca_cert: %v", ErrInvalidCACert, s.Name, err)
-		}
-		pem, err := os.ReadFile(p)
-		if err != nil {
-			return fmt.Errorf("%w: site %q ca_cert unreadable: %v", ErrInvalidCACert, s.Name, err)
-		}
-		if !x509.NewCertPool().AppendCertsFromPEM(pem) {
-			return fmt.Errorf("%w: site %q ca_cert has no parseable PEM", ErrInvalidCACert, s.Name)
-		}
-	}
-	return nil
-}
-
-func validate(cfg *Config) error {
-	validThemes := map[string]bool{"dark": true, "light": true, "auto": true}
-	if !validThemes[cfg.UI.Theme] {
-		return fmt.Errorf("%w: %q (must be dark, light, or auto)", ErrInvalidTheme, cfg.UI.Theme)
-	}
-	if cfg.API.Timeout < time.Second || cfg.API.Timeout > 120*time.Second {
-		return fmt.Errorf("%w: %v (must be 1s-120s)", ErrInvalidTimeout, cfg.API.Timeout)
-	}
-	if cfg.API.RetryAttempts < 0 || cfg.API.RetryAttempts > 10 {
-		return fmt.Errorf("retry_attempts out of range: %d (must be 0-10)", cfg.API.RetryAttempts)
-	}
-	if cfg.UI.RefreshInterval < 5*time.Second || cfg.UI.RefreshInterval > 10*time.Minute {
-		return fmt.Errorf("refresh_interval out of range: %v (must be 5s-10m)", cfg.UI.RefreshInterval)
-	}
-
-	names := make(map[string]bool)
-	dir := ""
-	if cfg.path != "" {
-		dir = filepath.Dir(cfg.path)
-	}
-	for i, s := range cfg.Sites {
-		if err := validateSite(s, i, names, dir); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("USCLI_SITE_URL"); v != "" {
-		ensureEnvSite(cfg)
-		cfg.Sites[0].URL = v
-	}
-	if v := os.Getenv("USCLI_SITE_USERNAME"); v != "" {
-		ensureEnvSite(cfg)
-		cfg.Sites[0].Username = v
-	}
-	if v := os.Getenv("USCLI_SITE_APP_PASSWORD"); v != "" {
-		ensureEnvSite(cfg)
-		cfg.Sites[0].AppPassword = v
-	}
-	if v := os.Getenv("USCLI_VERIFY_SSL"); v != "" {
-		ensureEnvSite(cfg)
-		b := v == "true" || v == "1"
-		cfg.Sites[0].VerifySSL = &b
-	}
-	if v := os.Getenv("USCLI_CA_CERT"); v != "" {
-		ensureEnvSite(cfg)
-		cfg.Sites[0].CACert = v
-	}
-	if v := os.Getenv("USCLI_THEME"); v != "" {
-		cfg.UI.Theme = v
-	}
-	if v := os.Getenv("USCLI_DEBUG"); v == "true" || v == "1" {
-		cfg.Debug.Enabled = true
-	}
-}
-
-func ensureEnvSite(cfg *Config) {
-	if len(cfg.Sites) == 0 {
-		cfg.Sites = append(cfg.Sites, SiteConfig{Name: "env"})
-	}
-}
-
-func (s *SiteConfig) BaseURL() string {
-	return normalizeURL(s.URL) + "/wp-json/ultimate-security/v1"
-}
-
-func (s *SiteConfig) AuthHeader() string {
-	cred := s.Username + ":" + s.AppPassword
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(cred))
-}
-
-func (s *SiteConfig) MaskedPassword() string {
-	if len(s.AppPassword) == 0 {
-		return ""
-	}
-	return "****"
-}
-
-func (s *SiteConfig) VerifyEnabled() bool {
-	if s.VerifySSL == nil {
-		return true
-	}
-	return *s.VerifySSL
-}
-
-func (s *SiteConfig) ResolveCACertPath(configDir string) (string, error) {
-	p := strings.TrimSpace(s.CACert)
-	if p == "" {
-		return "", nil
-	}
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
-	}
-	if !filepath.IsAbs(p) && configDir != "" {
-		p = filepath.Join(configDir, p)
-	}
-	return filepath.Clean(p), nil
+	return &File{}, "", nil
 }

@@ -14,21 +14,32 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Secrets and keys (defense in depth — never commit these)
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Go build and test artifacts
-/uscli
-/uscli.exe
+/wpus
+/wpus.exe
 *.test
 *.out
+coverage/
 coverage.out
 coverage.html
 
 # Release artifacts
 /dist/
+*.tar.gz
 
 # Local cache and temp directories
 /.cache/
 /tmp/
 /temp/
-docs/
-AGENTS.md
-CLAUDE.md
+
+# AI agent local state (keep committed contributor docs like AGENTS.md)
+.claude/
+.opencode/
+.cursor/
+*.local.md

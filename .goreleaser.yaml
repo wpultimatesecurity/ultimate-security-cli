@@ -1,0 +1,57 @@
+version: 2
+
+project_name: wpus
+
+builds:
+  - id: wpus
+    main: ./cmd/wpus
+    binary: wpus
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/wpultimatesecurity/ultimate-security-cli/internal/version.Version={{.Version}}
+      - -X github.com/wpultimatesecurity/ultimate-security-cli/internal/version.GitCommit={{.Commit}}
+      - -X github.com/wpultimatesecurity/ultimate-security-cli/internal/version.BuildDate={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+brews:
+  - name: wpus
+    repository:
+      owner: wpultimatesecurity
+      name: homebrew-tap
+    directory: Formula
+    homepage: https://github.com/wpultimatesecurity/ultimate-security-cli
+    description: Local, read-only WordPress security auditing for humans and AI agents
+    license: MIT
+    test: |
+      system "#{bin}/wpus version"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  draft: true
