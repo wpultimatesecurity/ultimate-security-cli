@@ -28,12 +28,14 @@ internal/
   wpcli/                  optional WP-CLI provider (exec, read-only commands)
   checks/                 check framework + all check implementations
   vulnerability/          VulnerabilityProvider interface, Wordfence client
-  releases/               WordPress.org core release data (stable-check API)
+  releases/               WordPress.org core release data (stable-check with
+                          version-check fallback), cached 24h
   scoring/                deterministic score computation
   redaction/              central scrubber applied before any reporter
   reporting/              terminal, JSON, and Markdown reporters
   platform/               OS/arch identity, per-user config/cache dirs
   config/                 optional YAML config file loading
+  version/                build identity injected via -ldflags at release time
 ```
 
 Dependency rule: `app → {discovery, wordpress, wpcli, checks, releases,
@@ -46,7 +48,8 @@ vulnerability, scoring, redaction, reporting, platform, config}`.
 ```text
 wpus scan
   1. merge flags + config file (.wpus.yaml / user config dir)
-  2. resolve sites: explicit paths validated directly, else discovery walk
+  2. resolve sites: explicit paths act as bounded walk seeds (so a parent
+     directory yields the sites inside it), else the platform root list
   3. shared services (once per run):
        - HTTP client (nil when --offline)
        - WordPress.org release data (releases.FetchCore, cached 24h)

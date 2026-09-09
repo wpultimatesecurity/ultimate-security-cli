@@ -36,4 +36,4 @@ CLI (`wpus`)**: a local, read-only WordPress security auditor.
 - Dependencies: `spf13/cobra`, `gopkg.in/yaml.v3` (runtime); everything else
   stdlib.
 
-[Unreleased]: https://github.com/wpultimatesecurity/ultimate-security-cli/compare/...HEAD
+[Unreleased]: https://github.com/wpultimatesecurity/ultimate-security-cli/

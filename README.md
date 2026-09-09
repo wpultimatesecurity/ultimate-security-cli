@@ -14,7 +14,8 @@ wpus scan
 
 - **Discovers** WordPress installations in standard Linux and macOS locations
   (`/var/www`, `~/Sites`, `~/Local Sites`, hosting layouts, project dirs) —
-  fast, bounded, and safely; or scans a path you give it.
+  fast, bounded, and safe; or scan a path you give it (paths double as walk
+  seeds, so scanning `/var/www` finds every site inside it).
 - **Inspects** WordPress core, `wp-config.php`, plugins, themes, filesystem
   layout and permissions, PHP runtime, and web-server configuration where
   locally readable.
@@ -177,7 +178,9 @@ Info        6
     {
       "path": "/var/www/example.com",
       "wordpress_version": "6.8.2",
+      "php_version": "8.2.10",
       "score": 78,
+      "category_scores": { "wordpress-config": 90, "plugins": 61 },
       "findings": [ /* id, title, category, severity, status,
                        confidence, description, evidence,
                        recommendation, references */ ]
@@ -281,17 +284,32 @@ internal/
   wpcli/             optional WP-CLI provider (read-only)
   checks/            check framework + 30 checks (each independently registered)
   vulnerability/     VulnerabilityProvider interface + Wordfence feed client
-  releases/          WordPress.org release data (core currency)
+  releases/          WordPress.org release data (stable-check → version-check fallback)
   scoring/           deterministic scoring engine
   redaction/         centralized secret redaction before any output
   reporting/         terminal / json / markdown reporters
   platform/          OS/arch and per-user directories
   config/            optional YAML config file
+  version/           build identity injected at link time
 ```
 
 Every `wp-config.php` is parsed lexically — site PHP is **never executed**.
 Platform differences (Linux vs macOS paths, permission semantics) are isolated
 in `platform/` and `discovery/`. Details: [docs/architecture.md](docs/architecture.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Language decision, package layout, scan pipeline, read-only guarantee, performance |
+| [docs/checks.md](docs/checks.md) | Every check: registry, severities, confidence, skip rules, authoring guide |
+| [docs/scoring.md](docs/scoring.md) | The scoring algorithm with a worked example |
+| [docs/agents.md](docs/agents.md) | JSON schema semantics, jq recipes, CI integration, sample agent prompts |
+| [docs/vulnerability-data.md](docs/vulnerability-data.md) | Configuring vulnerability providers (Wordfence feed, offline feed files) |
+| [docs/development.md](docs/development.md) | Build, test, release tooling, dependency license inventory |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Ground rules and the check-contribution checklist |
+| [SECURITY.md](SECURITY.md) | How to report security issues in wpus itself |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Development
 

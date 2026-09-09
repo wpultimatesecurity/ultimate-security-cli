@@ -52,7 +52,7 @@ wpus scan --json | jq -r '
 Score and category breakdown:
 
 ```bash
-wpus scan --json | jq '.sites[] | {path, score, categories}'
+wpus scan --json | jq '.sites[] | {path, score, category_scores}'
 ```
 
 ## Sample prompts

@@ -64,9 +64,13 @@ checks:
 
 **WP_CORE_OUTDATED** — medium/high. Compares the installed version (parsed
 from `wp-includes/version.php`, WP-CLI fallback) against the official
-WordPress.org stable-check feed. The feed's `insecure` classification yields
-high; plain `outdated` medium. Skipped offline or when the feed is
-unreachable. Reference: [WordPress hardening](https://developer.wordpress.org/advanced-administration/security/).
+WordPress.org release APIs. The primary source is the stable-check feed
+(`insecure` → high, `outdated` → medium); when it is unavailable, wpus falls
+back to the version-check endpoint and derives the same classification from
+per-branch upgrade offers (a version behind its own branch's fix releases is
+`insecure`; a maintained-branch tip that is not the newest release is
+`outdated`). Skipped offline or when both endpoints are unreachable.
+Reference: [WordPress hardening](https://developer.wordpress.org/advanced-administration/security/).
 
 **WP_CORE_AUTO_UPDATES_DISABLED** — low. Fails when `AUTOMATIC_UPDATER_DISABLED`
 is true or `WP_AUTO_UPDATE_CORE` is `false`; minor updates are on by default.
