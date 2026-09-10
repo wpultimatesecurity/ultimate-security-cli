@@ -94,12 +94,11 @@ The repository is public and stays publishable:
 
 ## Branch model
 
-- **`dev`** is the default branch and the integration target: features, fixes,
-  and documentation land here first, and CI runs on every push to it.
-- **`main`** carries released states. It is updated from `dev` at release time,
-  and release tags are cut from it.
+- **`dev`** is the only long-lived branch: the default branch, the integration
+  target, and the source of release tags. CI runs on every push to it.
 - Work happens on short-lived topic branches off `dev`, merged back with a pull
-  request. Nothing is pushed directly to `main`.
+  request, or directly for a maintainer. Pushing tags (`v*`) is what starts a
+  release; the tag ruleset keeps a published tag where it was.
 
 Maintainers configure the repository's GitHub settings with
 `scripts/github-setup.sh` (idempotent, reports anything it cannot do yet).

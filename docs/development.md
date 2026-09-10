@@ -155,7 +155,7 @@ real WordPress.org checksum service; it is not run by `make test` (run it with
 `scripts/github-setup.sh` configures the GitHub side with `gh`: description,
 topics, issue/wiki/project toggles, delete-branch-on-merge, vulnerability
 alerts and automated security fixes, secret scanning, the default branch, and
-branch protection for `dev` and `main`. It is idempotent and reports steps that
+branch protection for `dev`. It is idempotent and reports steps that
 cannot run yet as `PENDING` with the reason — a private repository on a free
 plan, for instance, gets no branch protection, and the default branch cannot
 be changed before `dev` exists on the remote.
@@ -203,9 +203,9 @@ goreleaser check                              # config validity
 goreleaser release --snapshot --clean         # build every target into dist/ without publishing
 ```
 
-Branch model: `dev` is the default (integration) branch, `main` holds released
-states, and tags are cut from `main`. CI runs on pushes to both and on every
-pull request.
+Branch model: `dev` is the only long-lived branch — the default branch,
+integration target, and source of release tags. CI runs on pushes to it and on
+every pull request.
 
 Actions policy: every `uses:` is pinned to a commit SHA (Dependabot keeps the
 pins current), the workflow token defaults to read-only, and the repository

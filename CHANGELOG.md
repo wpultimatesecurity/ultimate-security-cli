@@ -21,9 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added — public repository setup
 
-- Branch model: `dev` is the default (integration) branch, `main` carries
-  released states, and release tags are cut from `main`. CI runs on pushes to
-  both branches and on every pull request.
+- Branch model: `dev` is the single long-lived branch — default, integration
+  target, and source of release tags. CI runs on pushes to it and on every pull
+  request.
 - `.github/workflows/release.yml`: a `v*` tag builds all four targets plus
   `checksums.txt`, creates a draft release, and signs a build provenance
   attestation for every artifact (verifiable with `gh attestation verify`).

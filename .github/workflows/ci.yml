@@ -2,8 +2,8 @@ name: CI
 
 on:
   push:
-    # `dev` is the default (integration) branch; `main` carries releases.
-    branches: [main, dev]
+    # `dev` is the only long-lived branch (default and release source).
+    branches: [dev]
   pull_request:
 
 permissions:

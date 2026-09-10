@@ -16,8 +16,9 @@
 set -eu
 
 REPO="${WPUS_REPO:-wpultimatesecurity/ultimate-security-cli}"
+# The repository has a single long-lived branch: it is the default branch, the
+# integration target, and the source of release tags.
 DEFAULT_BRANCH=dev
-RELEASE_BRANCH=main
 PUBLIC=no
 for arg in "$@"; do
 	case "$arg" in
@@ -156,7 +157,7 @@ history_ruleset() {
   "name": "protect-branch-history",
   "target": "branch",
   "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH"], "exclude": [] } },
   "bypass_actors": [],
   "rules": [ { "type": "deletion" }, { "type": "non_fast_forward" } ]
 }
@@ -169,7 +170,7 @@ checks_ruleset() {
   "name": "require-ci-checks",
   "target": "branch",
   "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH"], "exclude": [] } },
   "bypass_actors": [ { "actor_type": "OrganizationAdmin", "bypass_mode": "always" } ],
   "rules": [
     {

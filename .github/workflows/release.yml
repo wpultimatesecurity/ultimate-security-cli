@@ -1,7 +1,7 @@
 name: Release
 
-# Tags only: a release is a human decision (see CONTRIBUTING.md), and the
-# branch model keeps `main` as the released state.
+# Tags only: a release is a human decision (see CONTRIBUTING.md). Tags are cut
+# from `dev`, the repository's only long-lived branch.
 on:
   push:
     tags: ["v*"]
