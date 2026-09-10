@@ -89,6 +89,16 @@ gh api -X PUT "repos/$REPO/actions/permissions" \
 gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
 	-f default_workflow_permissions=read -F can_approve_pull_request_reviews=false >/dev/null
 
+# Contributing code to a public repo runs it on a GitHub-hosted runner, so
+# approval is required for every external contributor rather than only the
+# first-time ones.
+if gh api -X PUT "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
+	-f approval_policy=all_external_contributors >/dev/null 2>&1; then
+	log "fork pull requests require approval for all external contributors"
+else
+	pending "fork pull request approval policy could not be set"
+fi
+
 # Auto-merge is an organization-level toggle; the API accepts the request but
 # the effective value stays false while the organization has it disabled.
 if [ "$(gh api "repos/$REPO" --jq '.allow_auto_merge')" != "true" ]; then
@@ -175,6 +185,19 @@ checks_ruleset() {
 JSON
 }
 
+tags_ruleset() {
+	cat <<JSON
+{
+  "name": "protect-release-tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [ { "actor_type": "OrganizationAdmin", "bypass_mode": "always" } ],
+  "rules": [ { "type": "deletion" }, { "type": "update" } ]
+}
+JSON
+}
+
 apply_ruleset() {
 	name="$1"
 	body="$(mktemp)"
@@ -193,6 +216,7 @@ apply_ruleset() {
 if gh api "repos/$REPO/branches/$DEFAULT_BRANCH" >/dev/null 2>&1; then
 	apply_ruleset protect-branch-history history_ruleset
 	apply_ruleset require-ci-checks checks_ruleset
+	apply_ruleset protect-release-tags tags_ruleset
 	log "effective rules on $DEFAULT_BRANCH: $(gh api "repos/$REPO/rules/branches/$DEFAULT_BRANCH" --jq '[.[].type] | join(", ")')"
 	# The list endpoint omits current_user_can_bypass; read each ruleset.
 	bypass="$(gh api "repos/$REPO/rulesets" --jq '.[].id' | while read -r id; do
@@ -203,13 +227,37 @@ else
 	pending "branch $DEFAULT_BRANCH does not exist on the remote yet; no ruleset applied"
 fi
 
-# --- 6. Code scanning -------------------------------------------------------
+# --- 6. Labels --------------------------------------------------------------
+# The issue templates reference bug/enhancement, which exist by default; this
+# adds the one a security project needs beyond them. Dependabot labels its own
+# pull requests (dependencies, github_actions).
+if ! gh label list --limit 100 2>/dev/null | grep -q "^security"; then
+	log "creating the security label"
+	gh label create security --description "Hardening and non-sensitive security work" --color 0E8A16 >/dev/null
+fi
+
+# --- 7. Code scanning -------------------------------------------------------
 # CodeQL default setup is free on public repositories and needs GitHub Advanced
 # Security on private ones.
 if gh api -X PATCH "repos/$REPO/code-scanning/default-setup" -f state=configured -f query_suite=default >/dev/null 2>&1; then
 	log "CodeQL default setup enabled"
 else
 	pending "code scanning needs a public repository (or GHAS); re-run after publishing"
+fi
+
+# "Secret scanning: non-provider patterns" and "validity checks" are managed by
+# the organization's code security configuration, not by the repository: the
+# repo-level field accepts the value and silently keeps it disabled. Applying
+# the organization's recommended configuration to this repository needs the
+# admin:org token scope (or the org UI), so it is reported rather than forced.
+if [ "$(gh api "repos/$REPO" --jq '.security_and_analysis.secret_scanning_non_provider_patterns.status' 2>/dev/null)" != "enabled" ]; then
+	pending "non-provider secret patterns and validity checks need the organization's code security configuration:"
+	pending "  gh auth refresh -h github.com -s admin:org"
+	org="${REPO%%/*}"
+	config_id="$(gh api "orgs/$org/code-security/configurations" --jq '.[0].id' 2>/dev/null || echo '<id>')"
+	repo_id="$(gh api "repos/$REPO" --jq .id 2>/dev/null || echo '<repo id>')"
+	pending "  gh api -X POST orgs/$org/code-security/configurations/$config_id/attach -f scope=selected -F selected_repository_ids[]=$repo_id"
+	pending "  (or apply it from the organization's Code security settings)"
 fi
 
 # Reporters must be able to reach the maintainers privately (SECURITY.md
@@ -220,7 +268,7 @@ else
 	pending "private vulnerability reporting could not be enabled"
 fi
 
-# --- 7. Visibility (explicit) ----------------------------------------------
+# --- 8. Visibility (explicit) ----------------------------------------------
 visibility="$(gh api "repos/$REPO" --jq '.visibility')"
 if [ "$PUBLIC" = yes ] && [ "$visibility" != "public" ]; then
 	log "making $REPO public"
