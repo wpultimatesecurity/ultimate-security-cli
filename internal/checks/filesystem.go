@@ -18,6 +18,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/security/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runWpConfigPerms,
 	})
@@ -30,6 +31,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/security/",
 			},
+			Importance: ImpStandard,
 		},
 		Run: runWeakPerms,
 	})
@@ -42,6 +44,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/security/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runExposedEnv,
 	})
@@ -54,6 +57,7 @@ func init() {
 			References: []string{
 				"https://owasp.org/www-project-web-security-testing-guide/",
 			},
+			Importance: ImpStandard,
 		},
 		Run: runExposedGit,
 	})
@@ -66,6 +70,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/debugging-in-wordpress/",
 			},
+			Importance: ImpContext,
 		},
 		Run: runExposedDebugLog,
 	})
@@ -78,6 +83,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/security/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runExposedBackups,
 	})
@@ -90,6 +96,7 @@ func init() {
 			References: []string{
 				"https://owasp.org/www-project-web-security-testing-guide/",
 			},
+			Importance: ImpStandard,
 		},
 		Run: runEditorBackups,
 	})
@@ -97,11 +104,12 @@ func init() {
 		Meta: Meta{
 			ID:          "PHP_EXECUTION_IN_UPLOADS",
 			Title:       "PHP files inside wp-content/uploads",
-			Category:    CatHardning,
+			Category:    CatHardening,
 			Description: "PHP files in the uploads directory are executable web paths where nothing should execute. Their presence usually means malicious upload or a broken deployment; WordPress never ships PHP there.",
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/security/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runPHPInUploads,
 	})
@@ -357,7 +365,7 @@ func runEditorBackups(ctx *Context) []Finding {
 }
 
 func runPHPInUploads(ctx *Context) []Finding {
-	m := Meta{ID: "PHP_EXECUTION_IN_UPLOADS", Title: "PHP files inside wp-content/uploads", Category: CatHardning,
+	m := Meta{ID: "PHP_EXECUTION_IN_UPLOADS", Title: "PHP files inside wp-content/uploads", Category: CatHardening,
 		References: []string{"https://developer.wordpress.org/advanced-administration/security/security/"}}
 	if !fileExists(ctx.Site.UploadsPath) {
 		return []Finding{m.skipf("uploads directory does not exist")}

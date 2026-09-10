@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue in wpus itself
+    url: https://github.com/wpultimatesecurity/ultimate-security-cli/security/advisories/new
+    about: Report privately. Do not open a public issue for a security problem.
+  - name: Question or usage help
+    url: https://github.com/wpultimatesecurity/ultimate-security-cli/blob/dev/docs/agents.md
+    about: Machine-readable usage, schemas, and CI recipes.

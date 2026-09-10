@@ -1,0 +1,50 @@
+name: Feature or check request
+description: Propose a new check, flag, output format, or integration
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a new **security check**, the most useful request answers: what does it
+        catch, what is the evidence, and what is the false-positive story? A check that
+        cannot determine its condition must report `skipped`/`unknown` with a reason,
+        never a guess.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the blindness or friction, not the implementation.
+    validations:
+      required: true
+  - type: input
+    id: checkid
+    attributes:
+      label: Proposed check ID (for a new check)
+      description: SCREAMING_SNAKE_CASE, e.g. SUSPICIOUS_USER_INI.
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and detection
+      description: Which files, APIs, or data sources would prove the finding, and what authority backs them?
+    validations:
+      required: false
+  - type: textarea
+    id: falsepositives
+    attributes:
+      label: False-positive story
+      description: When would this fire on a correctly-run site, and how should that be handled?
+    validations:
+      required: false
+  - type: dropdown
+    id: trust
+    attributes:
+      label: Does it need to execute site code?
+      description: A static check can run anywhere; anything that needs WordPress loaded belongs behind `--live`.
+      options:
+        - No — works statically (preferred)
+        - Yes — needs --live
+        - Unsure
+    validations:
+      required: true

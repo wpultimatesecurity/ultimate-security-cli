@@ -3,7 +3,9 @@ package discovery
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func mk(t *testing.T, base, rel string) {
@@ -136,6 +138,150 @@ func TestDiscoverDeduplicatesNestedRoots(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("dedup failed: %d entries for %s", count, site)
+	}
+}
+
+// smallTree writes two valid sites and one plain directory under a fresh
+// temp root. A complete walk of it enters 10 directories: the root, the two
+// sites, and each site's three core trees (wp-admin, wp-content,
+// wp-includes), which are entered and then skipped.
+func smallTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	makeSite(t, root, "alpha")
+	mk(t, root, "beta")
+	put(t, root, filepath.Join("beta", "notes.txt"), "not a site\n")
+	makeSite(t, root, "gamma")
+	return root
+}
+
+func TestDiscoverWithStatsAccounting(t *testing.T) {
+	tests := []struct {
+		name          string
+		opts          func(t *testing.T) Options
+		wantResults   int
+		wantValid     int
+		wantRoots     int
+		wantDirs      int
+		wantDepth     int
+		wantTruncated bool
+		wantReason    string
+	}{
+		{
+			name:        "complete small tree is not truncated",
+			opts:        func(t *testing.T) Options { return Options{Explicit: []string{smallTree(t)}} },
+			wantResults: 2, wantValid: 2,
+			wantRoots: 1, wantDirs: 10, wantDepth: DefaultDepth,
+		},
+		{
+			name: "result cap truncates",
+			opts: func(t *testing.T) Options {
+				return Options{Explicit: []string{smallTree(t)}, MaxResults: 1}
+			},
+			wantResults: 1, wantValid: 1,
+			wantRoots: 1, wantDirs: 10, wantDepth: DefaultDepth,
+			wantTruncated: true, wantReason: "max_results",
+		},
+		{
+			name: "expired timeout truncates before walking",
+			opts: func(t *testing.T) Options {
+				return Options{Explicit: []string{smallTree(t)}, Timeout: time.Nanosecond}
+			},
+			wantRoots: 1, wantDepth: DefaultDepth,
+			wantTruncated: true, wantReason: "time",
+		},
+		{
+			name: "missing root still counts",
+			opts: func(t *testing.T) Options {
+				return Options{Explicit: []string{filepath.Join(t.TempDir(), "nope")}}
+			},
+			wantResults: 1, wantValid: 0,
+			wantRoots: 1, wantDepth: DefaultDepth,
+		},
+		{
+			name: "custom depth is reported",
+			opts: func(t *testing.T) Options {
+				return Options{Explicit: []string{smallTree(t)}, Depth: 2}
+			},
+			wantResults: 2, wantValid: 2,
+			wantRoots: 1, wantDirs: 10, wantDepth: 2,
+		},
+		{
+			name: "skipped directories are not truncation",
+			opts: func(t *testing.T) Options {
+				root := t.TempDir()
+				makeSite(t, root, filepath.Join("wrapper", ".git", "site"))
+				makeSite(t, root, filepath.Join("wrapper", "vendor", "site2"))
+				makeSite(t, root, "wrapper")
+				return Options{Explicit: []string{root}}
+			},
+			wantResults: 1, wantValid: 1,
+			wantRoots: 1, wantDirs: 7, wantDepth: DefaultDepth,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, stats := DiscoverWithStats(tc.opts(t))
+			valid := 0
+			for _, r := range results {
+				if r.Valid {
+					valid++
+				}
+			}
+			if len(results) != tc.wantResults || valid != tc.wantValid {
+				t.Errorf("results = %d (%d valid), want %d (%d valid): %+v",
+					len(results), valid, tc.wantResults, tc.wantValid, results)
+			}
+			if stats.Roots != tc.wantRoots {
+				t.Errorf("Roots = %d, want %d", stats.Roots, tc.wantRoots)
+			}
+			if stats.DirectoriesVisited != tc.wantDirs {
+				t.Errorf("DirectoriesVisited = %d, want %d", stats.DirectoriesVisited, tc.wantDirs)
+			}
+			if stats.MaxDepth != tc.wantDepth {
+				t.Errorf("MaxDepth = %d, want %d", stats.MaxDepth, tc.wantDepth)
+			}
+			if stats.Truncated != tc.wantTruncated {
+				t.Errorf("Truncated = %v, want %v", stats.Truncated, tc.wantTruncated)
+			}
+			if stats.TruncationReason != tc.wantReason {
+				t.Errorf("TruncationReason = %q, want %q", stats.TruncationReason, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestDiscoverWithStatsUnreadableRootCounts(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	root := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+
+	results, stats := DiscoverWithStats(Options{Explicit: []string{root}})
+	if stats.Roots != 1 {
+		t.Errorf("unreadable root must count as a root: Roots = %d", stats.Roots)
+	}
+	if stats.Truncated {
+		t.Errorf("unreadable root is not truncation: %+v", stats)
+	}
+	if len(results) != 1 || results[0].Valid || results[0].Note != "permission denied" {
+		t.Errorf("want one permission-denied result, got %+v", results)
+	}
+}
+
+func TestDiscoverMatchesDiscoverWithStats(t *testing.T) {
+	opts := Options{Explicit: []string{smallTree(t), filepath.Join(t.TempDir(), "nope")}}
+	plain := Discover(opts)
+	detailed, _ := DiscoverWithStats(opts)
+	if !reflect.DeepEqual(plain, detailed) {
+		t.Fatalf("Discover and DiscoverWithStats disagree:\n Discover = %+v\n withStats = %+v", plain, detailed)
 	}
 }
 

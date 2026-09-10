@@ -33,6 +33,12 @@ Exit code 0 when at least one installation is found; 1 otherwise.`,
 			results := discovery.Discover(opts)
 			out := cmd.OutOrStdout()
 			if asJSON {
+				// Machine consumers must always receive an array: a null
+				// "sites" forces every consumer to special-case the empty
+				// result.
+				if results == nil {
+					results = []discovery.Result{}
+				}
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				if err := enc.Encode(struct {
@@ -73,6 +79,10 @@ func newChecksCmd(globals *GlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "checks",
 		Short: "List available security checks",
+		Long: `Lists every registered check with its category and coverage
+importance. "Importance" is the weight the check carries in the coverage
+score: core checks are blind spots when they cannot run, context checks are
+advisory.`,
 		Example: `  wpus checks
   wpus checks --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -84,10 +94,16 @@ func newChecksCmd(globals *GlobalFlags) *cobra.Command {
 					Title       string `json:"title"`
 					Category    string `json:"category"`
 					Description string `json:"description"`
+					// Importance drives the coverage score, so a consumer
+					// reading the registry needs it to interpret coverage.
+					Importance string `json:"importance"`
 				}
 				rows := make([]row, 0, len(all))
 				for _, c := range all {
-					rows = append(rows, row{ID: c.ID, Title: c.Title, Category: string(c.Category), Description: c.Description})
+					rows = append(rows, row{
+						ID: c.ID, Title: c.Title, Category: string(c.Category),
+						Description: c.Description, Importance: c.Importance.String(),
+					})
 				}
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
@@ -95,9 +111,9 @@ func newChecksCmd(globals *GlobalFlags) *cobra.Command {
 					Checks []row `json:"checks"`
 				}{rows})
 			}
-			fmt.Fprintf(out, "%-32s %-18s %s\n", "ID", "CATEGORY", "DEFAULT")
+			fmt.Fprintf(out, "%-34s %-18s %-9s %s\n", "ID", "CATEGORY", "IMPORTANCE", "DEFAULT")
 			for _, c := range all {
-				fmt.Fprintf(out, "%-32s %-18s %s\n", c.ID, c.Category, "enabled")
+				fmt.Fprintf(out, "%-34s %-18s %-9s %s\n", c.ID, c.Category, c.Importance.String(), "enabled")
 			}
 			return nil
 		},

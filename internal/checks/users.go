@@ -16,6 +16,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/security/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runAdminUsername,
 	})
@@ -57,6 +58,7 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/before-install/creation/",
 			},
+			Importance: ImpContext,
 		},
 		Run: runDBPrefix,
 	})
@@ -76,7 +78,10 @@ func runDBPrefix(ctx *Context) []Finding {
 	if prefix == "wp_" {
 		return []Finding{Finding{
 			ID: m.ID, Title: m.Title, Category: m.Category,
-			Severity: SevLow, Status: StatusFailed, Confidence: ConfHigh,
+			// Informational by design: a default prefix is not a control, and
+			// changing it on a live site is invasive. Raising it is a policy
+			// decision for the project (severity_overrides).
+			Severity: SevInfo, Status: StatusFailed, Confidence: ConfHigh,
 			Description:    "The database uses the default 'wp_' table prefix.",
 			Evidence:       map[string]string{"prefix": prefix},
 			Recommendation: "Consider a unique prefix for new installations. Existing sites should only change it with a careful migration (or leave as is — this is low-impact hardening).",
@@ -100,6 +105,7 @@ func init() {
 				"https://www.php.net/supported-versions.php",
 				"https://developer.wordpress.org/advanced-administration/server/php/",
 			},
+			Importance: ImpCore,
 		},
 		Run: runPHPOutdated,
 	})
@@ -112,6 +118,7 @@ func init() {
 			References: []string{
 				"https://www.php.net/manual/en/errorfunc.configuration.php",
 			},
+			Importance: ImpStandard,
 		},
 		Run: runPHPDisplayErrors,
 	})
@@ -123,9 +130,16 @@ type phpLifecycle struct {
 	eol         time.Time // security support ends
 }
 
+// phpLifecycleReviewed is the date the table below was last checked against
+// php.net. The maintenance test TestPHPLifecycleTableIsCurrent fails once the
+// newest entry is close to its end-of-life date, which forces a review instead
+// of letting the table rot into false negatives.
+const phpLifecycleReviewed = "2026-09-11"
+
 // phpLifecycles is derived from php.net/supported-versions.php.
-// Versions not present are treated as supported (no false positives for
-// future releases).
+// A version line that is absent from this table is reported as unknown, not
+// as supported: an unrecognised (or bogus) version string is exactly the case
+// where claiming "actively supported" would be a false pass.
 var phpLifecycles = map[string]phpLifecycle{
 	"5.6": {eol: time.Date(2018, 12, 31, 0, 0, 0, 0, time.UTC)},
 	"7.0": {eol: time.Date(2019, 12, 3, 0, 0, 0, 0, time.UTC)},
@@ -164,9 +178,9 @@ func runPHPOutdated(ctx *Context) []Finding {
 	ev := map[string]string{"version": version, "source": "wp-cli runtime (may differ from the web SAPI)"}
 	switch {
 	case !known:
-		return []Finding{Finding{ID: m.ID, Title: "PHP version actively supported", Category: m.Category,
-			Severity: SevInfo, Status: StatusPassed, Confidence: ConfMedium,
-			Description: "PHP " + line + " has no end-of-life date recorded; treated as supported.",
+		return []Finding{Finding{ID: m.ID, Title: "PHP support status unknown", Category: m.Category,
+			Severity: SevInfo, Status: StatusUnknown, Confidence: ConfLow,
+			Description: "PHP " + line + " is not in the scan's lifecycle table, so its support status could not be determined. The reported version may be a development build or a string this release does not know.",
 			Evidence:    ev}}
 	case lc.eol.Before(time.Now()):
 		return []Finding{Finding{

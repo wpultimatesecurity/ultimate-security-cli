@@ -125,3 +125,78 @@ func TestClampAtZero(t *testing.T) {
 		t.Errorf("many criticals must clamp to 0, got %d", got)
 	}
 }
+
+// TestCoverageWeightsImportance pins the property that keeps a high score
+// honest: a skipped high-importance check costs more coverage than a skipped
+// context check, and a suppressed finding still counts as determined.
+func TestCoverageWeightsImportance(t *testing.T) {
+	// WP_CORE_INTEGRITY_MODIFIED is ImpCore (3), DIRECTORY_LISTING is
+	// ImpContext (1). Skipping only the core check must cost 3/4 of a
+	// two-check audit, not half of it.
+	findings := []checks.Finding{
+		{ID: "CORE_INTEGRITY_MODIFIED", Status: checks.StatusSkipped, Severity: checks.SevInfo},
+		{ID: "DIRECTORY_LISTING", Status: checks.StatusPassed, Severity: checks.SevInfo},
+	}
+	cov := ComputeCoverage(findings)
+	if cov.Score != 25 {
+		t.Errorf("coverage = %d, want 25 (weight 1 of 4 determined)", cov.Score)
+	}
+	if len(cov.Gaps) != 1 || cov.Gaps[0].Importance != 3 {
+		t.Fatalf("gaps = %+v, want the core check with importance 3", cov.Gaps)
+	}
+
+	// The mirror image: skipping the context check costs little.
+	findings[0].Status, findings[1].Status = checks.StatusPassed, checks.StatusSkipped
+	if got := ComputeCoverage(findings).Score; got != 75 {
+		t.Errorf("coverage = %d, want 75 (weight 3 of 4 determined)", got)
+	}
+}
+
+func TestCoverageConfidenceBoundaries(t *testing.T) {
+	make100 := func(determined int) []checks.Finding {
+		var out []checks.Finding
+		for i := 0; i < 100; i++ {
+			st := checks.StatusSkipped
+			if i < determined {
+				st = checks.StatusPassed
+			}
+			out = append(out, checks.Finding{ID: "WP_DEBUG_ENABLED", Status: st, Severity: checks.SevInfo})
+		}
+		return out
+	}
+	cases := []struct {
+		determined int
+		wantScore  int
+		wantConf   checks.Confidence
+	}{
+		{100, 100, checks.ConfHigh},
+		{90, 90, checks.ConfHigh},
+		{89, 89, checks.ConfMedium},
+		{70, 70, checks.ConfMedium},
+		{69, 69, checks.ConfLow},
+		{0, 0, checks.ConfLow},
+	}
+	for _, tc := range cases {
+		cov := ComputeCoverage(make100(tc.determined))
+		if cov.Score != tc.wantScore || cov.Confidence != string(tc.wantConf) {
+			t.Errorf("%d determined: score %d (%s), want %d (%s)",
+				tc.determined, cov.Score, cov.Confidence, tc.wantScore, tc.wantConf)
+		}
+		if cov.Total != 100 || cov.Determined != tc.determined {
+			t.Errorf("%d determined: counted %d/%d", tc.determined, cov.Determined, cov.Total)
+		}
+	}
+}
+
+// TestSuppressedFindingsDoNotScore pins that accepting a risk removes its
+// weight without removing the finding.
+func TestSuppressedFindingsDoNotScore(t *testing.T) {
+	f := failed(checks.SevCritical, "X", checks.CatConfig)
+	if got := Compute([]checks.Finding{f}).Overall; got != 60 {
+		t.Fatalf("critical finding score = %d, want 60", got)
+	}
+	f.Suppressed = true
+	if got := Compute([]checks.Finding{f}).Overall; got != 100 {
+		t.Errorf("suppressed finding still scored: %d, want 100", got)
+	}
+}

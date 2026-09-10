@@ -1,45 +1,134 @@
-# OS files
-.DS_Store
-Thumbs.db
+# wpus — ignore rules
+#
+# Rule of thumb: if a file is generated, machine-specific, private to the
+# maintainers, or would tell a reader more than it should, it does not belong
+# in the repository. Anything a contributor needs to build the binary or run
+# the tests IS tracked (source, tests, fixtures, product docs, CI config).
+#
+# Every section explains itself: a rule whose purpose is unclear gets deleted
+# by the next person, and then the file it was protecting gets committed.
 
-# Editor and IDE state
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# --- Build output -----------------------------------------------------------
+/wpus
+/wpus.exe
+/dist/
+*.test
+*.out
+*.exe
 
-# Local environment files
+# --- Test and profiling output ---------------------------------------------
+coverage/
+coverage.out
+coverage.html
+coverage.txt
+*.prof
+*.pprof
+
+# --- Generated scan output --------------------------------------------------
+# Produced when dogfooding wpus inside its own repository. Root-anchored so a
+# fixture deeper in the tree can never be hidden by these patterns.
+/results.sarif
+/report.sarif
+/scan.json
+/report.json
+/baseline.json
+/wpus-baseline.json
+
+# --- Release archives -------------------------------------------------------
+# GoReleaser writes into /dist/ (above); these catch artefacts built by hand
+# or unzipped into the repository root.
+/*.tar.gz
+/*.tgz
+/*.zip
+
+# --- Private research and internal documents --------------------------------
+# Research dumps live in dated folders (docs/11:09:2026/, docs/2026-09-11/)
+# and contain internal audits of this tool: the weaknesses they describe are a
+# roadmap for an attacker, so they are maintained locally, never published.
+# Both naming conventions are covered; a dated folder cannot be tracked by
+# accident.
+docs/?[0-9]:[0-9][0-9]:[0-9][0-9][0-9][0-9]/
+docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+docs/research/
+docs/private/
+docs/internal/
+*-internal.md
+*.private.md
+*.local.md
+# Maintainer scratch notes (a tracked NOTES.md needs an explicit `!NOTES.md`).
+NOTES.md
+
+# --- Tooling packs and caches -----------------------------------------------
+# repomix (and similar) pack the whole tree into one file: large, redundant,
+# and stale the moment it is written.
+repomix-output*.xml
+
+# --- Local environment and secrets ------------------------------------------
 .env
 .env.*
 !.env.example
-
-# Secrets and keys (defense in depth — never commit these)
+# Local overrides of a committed policy file (.wpus.yaml itself is a product
+# feature — a repository may commit one for CI — so only overrides are hidden).
+.wpus.local.yaml
+.wpus.local.yml
+secrets/
 *.pem
 *.key
 *.p12
 *.pfx
+*.keystore
 
-# Go build and test artifacts
-/wpus
-/wpus.exe
-*.test
-*.out
-coverage/
-coverage.out
-coverage.html
+# --- OS and editor state ----------------------------------------------------
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+.fleet/
+.history/
+.project
+.settings/
+.nbproject/
+*.swp
+*.swo
+*.kate-swp
+*~
+\#*\#
+.\#*
 
-# Release artifacts
-/dist/
-*.tar.gz
+# --- Agent and AI-tooling state ---------------------------------------------
+# Local agent configuration and transcripts. Documentation written for agents
+# (docs/agents.md, AGENTS.md) is intentional and stays tracked; only the
+# tools' own state directories are ignored.
+.claude/
+.cursor/
+.opencode/
+.continue/
+.aider*
+.crush/
 
-# Local cache and temp directories
+# --- Go workspace and vendoring ---------------------------------------------
+go.work
+go.work.sum
+# Not vendored by design; remove this line if the project ever vendors on
+# purpose (ignore rules cannot be negated back for the contents of a directory).
+/vendor/
+
+# --- Temporary files --------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.orig
+*.log
+# The committed demo fixture is an intentional log file: keep it visible so it
+# cannot be lost by a cleanup that trusts the rule above.
+!testdata/demo-site/wp-content/debug.log
+!.gitkeep
+
+# --- Local runtime state ----------------------------------------------------
+# Nothing today (caches live in the per-user cache directory), but keep a
+# scan's scratch output from landing in the tree.
 /.cache/
 /tmp/
 /temp/
-
-# AI agent local state (keep committed contributor docs like AGENTS.md)
-.claude/
-.opencode/
-.cursor/
-*.local.md

@@ -51,6 +51,7 @@ func init() {
 				"https://nginx.org/en/docs/http/ngx_http_autoindex_module.html",
 				"https://httpd.apache.org/docs/2.4/mod/mod_autoindex.html",
 			},
+			Importance: ImpContext,
 		},
 		Run: runDirectoryListing,
 	})

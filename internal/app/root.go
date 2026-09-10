@@ -6,15 +6,26 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/wpultimatesecurity/ultimate-security-cli/internal/checks"
 )
 
-// Exit codes.
+// Exit codes. They are a stable contract for automation:
+//
+//	0 scan completed and policy passed
+//	1 policy failure (findings at or above --fail-on, or coverage below
+//	  --fail-on-coverage-below)
+//	2 usage or configuration error
+//	3 runtime failure
+//	4 permission failure
+//	5 no targets scanned (a scan that inspected nothing must not pass CI)
 const (
 	ExitOK         = 0
 	ExitFindings   = 1
 	ExitUsage      = 2
 	ExitError      = 3
 	ExitPermission = 4
+	ExitNoTargets  = 5
 )
 
 // GlobalFlags are the flags every command accepts.
@@ -68,14 +79,23 @@ func NewRoot(versionInfo string) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "wpus",
 		Short: "Ultimate Security CLI — local, read-only WordPress security auditing",
-		Long: `wpus audits the security posture of local WordPress installations.
+		// The count comes from the registry so the help text cannot drift.
+		Long: fmt.Sprintf(`wpus audits the security posture of local WordPress installations.
 
-It discovers WordPress sites on the machine, runs a battery of read-only
-security checks (core, configuration, plugins, themes, filesystem, PHP,
-server, network), computes a deterministic score, and reports for humans
-(terminal), documents (markdown), and AI agents (JSON).
+It discovers WordPress sites on the machine, runs %d read-only security checks
+(core and file integrity, configuration, plugins, themes, must-use plugins and
+drop-ins, filesystem, PHP, web server, exposure, network), and reports for
+humans (terminal), documents (markdown), machines (JSON), and code scanning
+(SARIF).`, len(checks.All())) + `
 
-Scans never modify the site.`,
+Scans never modify the site, and a default scan never executes the audited
+site's PHP. Two scores are produced: a risk score for the findings, and a
+coverage score for how much of the audit actually ran — a clean risk score
+with low coverage means "not examined", not "secure".
+
+Use --live to let WP-CLI load WordPress for additional facts (this executes
+target-controlled code), and ` + "`wpus baseline create`" + ` / ` + "`--baseline`" + ` to
+compare an installation against a recorded state.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -85,6 +105,7 @@ Scans never modify the site.`,
 
 	root.AddCommand(
 		newScanCmd(&globals),
+		newBaselineCmd(&globals),
 		newDiscoverCmd(&globals),
 		newChecksCmd(&globals),
 		newVersionCmd(versionInfo),
@@ -110,7 +131,9 @@ func ExecuteWithWriters(versionInfo string, args []string, stdout, stderr io.Wri
 		return ExitPermission
 	case runtimeError:
 		return ExitError
-	case exitFindingsError, errNotFound:
+	case exitNoTargetsError:
+		return ExitNoTargets
+	case exitFindingsError, exitCoverageError, errNotFound:
 		// Policy outcome, not a crash: findings met the threshold (or
 		// discover found nothing). Distinguish from usage errors.
 		return ExitFindings

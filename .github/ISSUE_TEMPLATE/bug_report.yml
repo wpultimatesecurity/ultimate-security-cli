@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in wpus is wrong, crashes, or reports the wrong thing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security issues here.** Use the private channel in
+        [SECURITY.md](https://github.com/wpultimatesecurity/ultimate-security-cli/blob/dev/SECURITY.md).
+
+        Never paste real secrets, salts, or full `wp-config.php` contents — redact them.
+  - type: input
+    id: version
+    attributes:
+      label: wpus version
+      description: Output of `wpus version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (arm64)
+        - macOS (amd64)
+        - Linux (arm64)
+        - Linux (amd64)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: The exact invocation, including flags.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: |
+        Include redacted JSON output where useful. `--offline` makes runs reproducible
+        when the problem is not network-related.
+    validations:
+      required: true
+  - type: textarea
+    id: site
+    attributes:
+      label: Site context
+      description: |
+        Only what matters: WordPress version, whether the site uses a relocated
+        content directory, PHP version, and whether you ran with `--live`.
+        Do not include credentials, database contents, or full configuration files.
+    validations:
+      required: false

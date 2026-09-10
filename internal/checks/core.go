@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wpultimatesecurity/ultimate-security-cli/internal/vulnerability"
 	"github.com/wpultimatesecurity/ultimate-security-cli/internal/wordpress"
 )
 
@@ -19,6 +20,7 @@ func init() {
 				"https://developer.wordpress.org/advanced-administration/security/",
 				"https://api.wordpress.org/core/stable-check/1.7/",
 			},
+			Importance: ImpStandard,
 		},
 		Run: runCoreOutdated,
 	})
@@ -31,8 +33,22 @@ func init() {
 			References: []string{
 				"https://developer.wordpress.org/advanced-administration/upgrade/updating-wordpress/",
 			},
+			Importance: ImpContext,
 		},
 		Run: runCoreAutoUpdates,
+	})
+	Register(Simple{
+		Meta: Meta{
+			ID:          "WP_CORE_VULNERABILITY",
+			Title:       "WordPress core has known vulnerabilities",
+			Category:    CatCore,
+			Description: "Matches the installed core version against a vulnerability data provider. Distinct from WP_CORE_OUTDATED (maintenance state) and CORE_INTEGRITY_MODIFIED (local file tampering): this reports advisories that affect this exact version. Requires a configured vulnerability provider.",
+			References: []string{
+				"https://www.wordfence.com/help/wordfence-intelligence/v3-accessing-and-consuming-the-vulnerability-data-feed/",
+			},
+			Importance: ImpCore,
+		},
+		Run: runCoreVulnerability,
 	})
 }
 
@@ -94,6 +110,51 @@ func runCoreOutdated(ctx *Context) []Finding {
 			Evidence:    ev,
 		}}
 	}
+}
+
+// runCoreVulnerability reports advisories that affect the installed core
+// version itself, which is a different question from "is it current".
+func runCoreVulnerability(ctx *Context) []Finding {
+	m := Meta{ID: "WP_CORE_VULNERABILITY", Title: "WordPress core has known vulnerabilities", Category: CatCore,
+		References: []string{"https://www.wordfence.com/help/wordfence-intelligence/v3-accessing-and-consuming-the-vulnerability-data-feed/"}}
+	installed := siteVersion(ctx)
+	if installed == "" {
+		return []Finding{m.skipf("WordPress version could not be determined")}
+	}
+	if ctx.Vulns.Name() == "none" {
+		return []Finding{m.skipf("vulnerability data unavailable — configure a provider (see docs/vulnerability-data.md)")}
+	}
+	vulns, err := ctx.Vulns.LookupCore(installed)
+	if err != nil {
+		return []Finding{m.skipf("vulnerability lookup failed: " + err.Error())}
+	}
+	if len(vulns) == 0 {
+		return []Finding{{ID: m.ID, Title: "No known core vulnerabilities", Category: m.Category,
+			Severity: SevInfo, Status: StatusPassed, Confidence: ConfMedium,
+			Description: fmt.Sprintf("WordPress %s does not match any advisory in the configured data source.", installed)}}
+	}
+	sev, _ := vulnSeverity(vulns)
+	occ := make([]Occurrence, 0, len(vulns))
+	for _, v := range vulns {
+		occ = append(occ, occurrenceForVuln("core", "wordpress", installed, v))
+	}
+	var lines []string
+	for i, v := range vulns {
+		if i >= 10 {
+			lines = append(lines, fmt.Sprintf("… %d more", len(vulns)-10))
+			break
+		}
+		lines = append(lines, strings.Join(vulnLines([]vulnerability.Vuln{v}, 1), ""))
+	}
+	return []Finding{{
+		ID: m.ID, Title: m.Title, Category: m.Category,
+		Severity: sev, Status: StatusFailed, Confidence: ConfHigh,
+		Description:    fmt.Sprintf("WordPress %s matches %d known vulnerabilit(ies) in the configured data source.", installed, len(vulns)),
+		Evidence:       map[string]string{"installed": installed, "advisories": strings.Join(lines, "; ")},
+		Occurrences:    occ,
+		Recommendation: "Update WordPress to a release that fixes these advisories; if the site cannot be updated immediately, apply the provider's mitigation.",
+		References:     m.References,
+	}}
 }
 
 func runCoreAutoUpdates(ctx *Context) []Finding {
@@ -164,6 +225,7 @@ func init() {
 			Category:    CatConfig,
 			Description: "WP_DEBUG writes diagnostics that can leak paths and internal details. On production it should stay off.",
 			References:  []string{"https://developer.wordpress.org/debugging-in-wordpress/"},
+			Importance:  ImpContext,
 		},
 		Run: runDebug,
 	})
@@ -174,6 +236,7 @@ func init() {
 			Category:    CatConfig,
 			Description: "With WP_DEBUG_DISPLAY on (the WordPress default when WP_DEBUG is enabled and it is not defined), PHP errors are printed in page output and can disclose paths, SQL, and secrets.",
 			References:  []string{"https://developer.wordpress.org/debugging-in-wordpress/"},
+			Importance:  ImpContext,
 		},
 		Run: runDebugDisplay,
 	})
@@ -255,8 +318,9 @@ func init() {
 			ID:          "FILE_MODS_ALLOWED",
 			Title:       "Admin file modifications are allowed",
 			Category:    CatConfig,
-			Description: "DISALLOW_FILE_MODS blocks plugin/theme installs and edits through the admin — useful hardening on sites managed via WP-CLI or deployment pipelines.",
+			Description: "DISALLOW_FILE_MODS blocks plugin/theme installs and edits through the admin — useful hardening on sites managed by WP-CLI or deployment pipelines.",
 			References:  []string{"https://developer.wordpress.org/advanced-administration/security/security/"},
+			Importance:  ImpContext,
 		},
 		Run: runFileMods,
 	})
@@ -267,6 +331,7 @@ func init() {
 			Category:    CatConfig,
 			Description: "The eight AUTH_KEY/LOGGED_IN_KEY/NONCE_KEY values and salts sign WordPress cookies. Missing or placeholder values make cookie forgery materially easier.",
 			References:  []string{"https://developer.wordpress.org/advanced-administration/security/keys/"},
+			Importance:  ImpCore,
 		},
 		Run: runSecurityKeys,
 	})
@@ -274,9 +339,10 @@ func init() {
 		Meta: Meta{
 			ID:          "FORCE_SSL_ADMIN_DISABLED",
 			Title:       "FORCE_SSL_ADMIN is not enabled",
-			Category:    CatHardning,
+			Category:    CatHardening,
 			Description: "FORCE_SSL_ADMIN pins all admin traffic to HTTPS. Modern WordPress forces HTTPS when the site URL uses it, so this is a gap only when the configuration is ambiguous or mixed.",
 			References:  []string{"https://developer.wordpress.org/advanced-administration/security/https/"},
+			Importance:  ImpContext,
 		},
 		Run: runForceSSLAdmin,
 	})
@@ -318,7 +384,10 @@ func runFileMods(ctx *Context) []Finding {
 	}
 	return []Finding{Finding{
 		ID: m.ID, Title: m.Title, Category: m.Category,
-		Severity: SevLow, Status: StatusFailed, Confidence: ConfHigh,
+		// Informational: DISALLOW_FILE_MODS is correct for immutable or
+		// deployment-managed sites and wrong for others, so it is reported as
+		// a policy signal rather than a universal deduction.
+		Severity: SevInfo, Status: StatusFailed, Confidence: ConfHigh,
 		Description:    "DISALLOW_FILE_MODS is not set; compromised admin credentials can install arbitrary plugin or theme code.",
 		Evidence:       map[string]string{"file": "wp-config.php"},
 		Recommendation: "On production sites managed outside wp-admin, add define( 'DISALLOW_FILE_MODS', true );.",
@@ -368,7 +437,7 @@ func runSecurityKeys(ctx *Context) []Finding {
 }
 
 func runForceSSLAdmin(ctx *Context) []Finding {
-	m := Meta{ID: "FORCE_SSL_ADMIN_DISABLED", Title: "FORCE_SSL_ADMIN is not enabled", Category: CatHardning,
+	m := Meta{ID: "FORCE_SSL_ADMIN_DISABLED", Title: "FORCE_SSL_ADMIN is not enabled", Category: CatHardening,
 		References: []string{"https://developer.wordpress.org/advanced-administration/security/https/"}}
 	cfg := ctx.Site.Config
 	if cfg == nil || !cfg.Exists {
@@ -385,7 +454,9 @@ func runForceSSLAdmin(ctx *Context) []Finding {
 	}
 	return []Finding{Finding{
 		ID: m.ID, Title: m.Title, Category: m.Category,
-		Severity: SevLow, Status: StatusFailed, Confidence: ConfMedium,
+		// Informational: modern WordPress already forces HTTPS for admin when
+		// the site URL is HTTPS, so this is a policy preference, not a gap.
+		Severity: SevInfo, Status: StatusFailed, Confidence: ConfMedium,
 		Description:    "The site serves HTTPS but FORCE_SSL_ADMIN is not defined; wp-admin requests over plain HTTP are not redirected by WordPress configuration.",
 		Evidence:       map[string]string{"file": "wp-config.php"},
 		Recommendation: "Add define( 'FORCE_SSL_ADMIN', true ); to pin admin traffic to HTTPS.",

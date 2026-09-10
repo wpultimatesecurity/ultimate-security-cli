@@ -2,7 +2,7 @@
 # Ultimate Security CLI (wpus) installer.
 #
 # Usage:
-#   curl -fsSL https://example.com/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/wpultimatesecurity/ultimate-security-cli/main/scripts/install.sh | sh
 #   sh install.sh                       # auto-detect latest release
 #   WPUS_VERSION=v0.1.0 sh install.sh   # pin a version
 #   WPUS_INSTALL_DIR=~/.local/bin sh install.sh
@@ -15,6 +15,10 @@
 #
 # The script downloads a release binary, verifies its sha256 checksum,
 # and installs it atomically. It never touches unrelated configuration.
+#
+# For provenance rather than integrity, verify the attestation first:
+#   gh attestation verify wpus_<version>_<os>_<arch>.tar.gz \
+#     --repo wpultimatesecurity/ultimate-security-cli
 
 set -eu
 

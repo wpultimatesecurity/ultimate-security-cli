@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wpultimatesecurity/ultimate-security-cli/internal/checks"
+	"github.com/wpultimatesecurity/ultimate-security-cli/internal/sanitize"
 )
 
 // Color encodes a 24-bit-free SGR sequence; empty means "no color".
@@ -29,7 +30,7 @@ const (
 type TerminalOptions struct {
 	Color   bool // emit ANSI color
 	Quiet   bool // one-line summary per site only
-	Verbose bool // list passed/skipped checks too
+	Verbose bool // list passed/skipped checks and coverage gaps
 }
 
 // Terminal renders the default human-readable report.
@@ -89,7 +90,8 @@ func (t Terminal) writeSite(b *strings.Builder, r *Report, site SiteReport) {
 			countSev(site, checks.SevCritical), countSev(site, checks.SevHigh),
 			countSev(site, checks.SevMedium), countSev(site, checks.SevLow),
 			countSev(site, checks.SevInfo))
-		fmt.Fprintf(b, "%s  score %d/100  (%s)\n", site.Path, site.Score, sevSummary)
+		fmt.Fprintf(b, "%s  risk %d/100  coverage %d%%  (%s)\n",
+			site.Path, site.RiskScore, site.CoverageScore, sevSummary)
 		return
 	}
 	b.WriteString(t.paint(cBold, "Site"))
@@ -97,31 +99,32 @@ func (t Terminal) writeSite(b *strings.Builder, r *Report, site SiteReport) {
 	row := func(k, v string) {
 		fmt.Fprintf(b, "%-14s%s\n", k, v)
 	}
-	row("Path", site.Path)
+	row("Path", sanitize.Raw(site.Path))
 	if site.WordPress != "" {
-		row("WordPress", site.WordPress)
+		row("WordPress", sanitize.Raw(site.WordPress))
 	}
 	if site.PHP != "" {
-		row("PHP", site.PHP)
+		row("PHP", sanitize.Raw(site.PHP))
 	}
 	if site.Server != "" {
-		row("Server", site.Server)
+		row("Server", sanitize.Raw(site.Server))
 	}
 	row("Platform", r.Environment.DisplayName())
-	score := fmt.Sprint(site.Score)
-	switch {
-	case site.Score >= 80:
-		score = t.paint(cGreen, score)
-	case site.Score >= 50:
-		score = t.paint(cYellow, score)
-	default:
-		score = t.paint(cRed, score)
-	}
-	row("Security", score+"/100")
+	row("Risk", t.score(site.RiskScore)+"/100  "+t.coverageLabel(site))
 	b.WriteString("\n")
 
+	if site.CoverageScore < 80 {
+		fmt.Fprintf(b, "%s\n", t.paint(cYellow, fmt.Sprintf(
+			"Incomplete: %d of %d checks could not be determined — a high risk score here does not mean the site was fully examined.",
+			site.Coverage.Total-site.Coverage.Determined, site.Coverage.Total)))
+	}
+	if site.Coverage.WalkTruncated {
+		fmt.Fprintf(b, "%s\n", t.paint(cDim,
+			"Filesystem walk stopped early ("+site.Coverage.WalkTruncationReason+" budget): file-based results are partial — rerun with --deep."))
+	}
+
 	for _, n := range site.Notes {
-		b.WriteString(t.paint(cDim, "note: "+n+"\n"))
+		b.WriteString(t.paint(cDim, "note: "+sanitize.Raw(n)+"\n"))
 	}
 
 	failed := failedFindings(site.Findings)
@@ -145,9 +148,10 @@ func (t Terminal) writeSite(b *strings.Builder, r *Report, site SiteReport) {
 	}
 
 	if t.Opts.Verbose {
+		t.writeCoverageGaps(b, site)
 		other := otherFindings(site.Findings)
 		if len(other) > 0 {
-			b.WriteString("\n" + t.paint(cDim, "PASSED / SKIPPED") + "\n")
+			b.WriteString("\n" + t.paint(cDim, "PASSED / SKIPPED / UNKNOWN") + "\n")
 			for _, f := range other {
 				status := string(f.Status)
 				fmt.Fprintf(b, "  %-8s %-26s %s\n", status, f.ID, f.Title)
@@ -156,32 +160,135 @@ func (t Terminal) writeSite(b *strings.Builder, r *Report, site SiteReport) {
 	}
 }
 
+// coverageLabel renders the coverage score with its confidence.
+func (t Terminal) coverageLabel(site SiteReport) string {
+	label := fmt.Sprintf("Coverage %d%% (%s confidence)", site.CoverageScore, site.Confidence)
+	switch {
+	case site.CoverageScore >= 90:
+		return t.paint(cGreen, label)
+	case site.CoverageScore >= 70:
+		return t.paint(cYellow, label)
+	default:
+		return t.paint(cRed, label)
+	}
+}
+
+func (t Terminal) score(v int) string {
+	s := fmt.Sprint(v)
+	switch {
+	case v >= 80:
+		return t.paint(cGreen, s)
+	case v >= 50:
+		return t.paint(cYellow, s)
+	default:
+		return t.paint(cRed, s)
+	}
+}
+
+// writeCoverageGaps lists the checks that did not run or could not conclude,
+// most important first: this is the evidence behind the coverage score.
+func (t Terminal) writeCoverageGaps(b *strings.Builder, site SiteReport) {
+	if len(site.Coverage.Gaps) == 0 {
+		return
+	}
+	b.WriteString("\n" + t.paint(cDim, "NOT DETERMINED") + "\n")
+	for _, g := range site.Coverage.Gaps {
+		reason := g.Reason
+		if reason == "" {
+			reason = "no reason reported"
+		}
+		fmt.Fprintf(b, "  %-26s %-8s %s\n", sanitize.Raw(g.CheckID), sanitize.Raw(g.Status), sanitize.Raw(reason))
+	}
+}
+
 func (t Terminal) writeFinding(b *strings.Builder, f checks.Finding) {
 	b.WriteString("\n")
-	b.WriteString(t.paint(cBold, f.Title))
+	b.WriteString(t.paint(cBold, sanitize.Raw(f.Title)))
+	if f.Suppressed {
+		b.WriteString(t.paint(cDim, "  [suppressed: "+sanitize.Raw(f.SuppressionReason)+"]"))
+	}
 	b.WriteString("\n")
 	if f.Description != "" {
-		b.WriteString(wrap(f.Description, 76, 2) + "\n")
+		b.WriteString(wrap(sanitize.Raw(f.Description), 76, 2) + "\n")
 	}
 	keys := make([]string, 0, len(f.Evidence))
 	for k := range f.Evidence {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	// Evidence keys come from checks but may embed target-controlled text, so
+	// the column width is derived from the keys but capped: a hostile key must
+	// not be able to push every value off the screen.
+	width := 13
 	for _, k := range keys {
-		fmt.Fprintf(b, "  %-12s%s\n", k+":", f.Evidence[k])
+		// +2 keeps at least one space between the colon and the value.
+		if w := len(sanitize.Raw(k)) + 2; w > width {
+			width = min(w, 32)
+		}
+	}
+	for _, k := range keys {
+		fmt.Fprintf(b, "  %-*s%s\n", width, sanitize.Raw(k)+":", sanitize.Raw(f.Evidence[k]))
+	}
+	if len(f.Occurrences) > 0 {
+		b.WriteString(t.paint(cDim, "  occurrences:\n"))
+		for _, o := range f.Occurrences {
+			fmt.Fprintf(b, "    %s\n", sanitize.Raw(t.renderOccurrence(o)))
+		}
 	}
 	if f.Recommendation != "" {
 		b.WriteString("\n")
 		b.WriteString(t.paint(cDim, "Recommendation"))
 		b.WriteString("\n")
-		b.WriteString(wrap(f.Recommendation, 76, 2) + "\n")
+		b.WriteString(wrap(sanitize.Raw(f.Recommendation), 76, 2) + "\n")
 	}
 	if len(f.References) > 0 && len(f.References) <= 3 {
 		for _, ref := range f.References {
-			b.WriteString(t.paint(cDim, "  ref: "+ref+"\n"))
+			b.WriteString(t.paint(cDim, "  ref: "+sanitize.Raw(ref)+"\n"))
 		}
 	}
+}
+
+// renderOccurrence renders one structured occurrence on a single line.
+func (t Terminal) renderOccurrence(o checks.Occurrence) string {
+	parts := []string{}
+	if o.ResourceType != "" {
+		label := o.ResourceType
+		if o.Slug != "" {
+			label += " " + o.Slug
+		}
+		if o.Version != "" {
+			label += " " + o.Version
+		}
+		parts = append(parts, label)
+	} else if o.Location != "" {
+		parts = append(parts, o.Location)
+	}
+	if o.AdvisoryID != "" {
+		parts = append(parts, o.AdvisoryID)
+	}
+	if o.CVE != "" && o.CVE != o.AdvisoryID {
+		parts = append(parts, o.CVE)
+	}
+	if o.Severity != "" {
+		parts = append(parts, o.Severity)
+	}
+	if len(o.FixedIn) > 0 {
+		parts = append(parts, "fixed in "+strings.Join(o.FixedIn, ", "))
+	} else if o.Patched != nil && !*o.Patched {
+		parts = append(parts, "no fix available")
+	}
+	if o.KnownExploited != nil && *o.KnownExploited {
+		parts = append(parts, "exploited in the wild")
+	}
+	return strings.Join(parts, " — ")
+}
+
+// min is the integer minimum used for layout clamping.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (t Terminal) writeSummary(b *strings.Builder, s Summary) {
@@ -200,18 +307,20 @@ func (t Terminal) writeSummary(b *strings.Builder, s Summary) {
 	line("Medium", s.Medium, cYellow)
 	line("Low", s.Low, cCyan)
 	line("Info", s.Info, "")
+	line("Unknown", s.Unknown, cYellow)
+	line("Suppressed", s.Suppressed, cGray)
 	fmt.Fprintf(b, "%-12s%d site(s) scanned, %d passed, %d skipped\n", "Sites", s.SitesScanned, s.Passed, s.Skipped)
 }
 
 func (t Terminal) writeQuietSummary(b *strings.Builder, s Summary) {
-	fmt.Fprintf(b, "scanned %d site(s): critical %d, high %d, medium %d, low %d, info %d\n",
-		s.SitesScanned, s.Critical, s.High, s.Medium, s.Low, s.Info)
+	fmt.Fprintf(b, "scanned %d site(s): critical %d, high %d, medium %d, low %d, info %d, unknown %d, suppressed %d\n",
+		s.SitesScanned, s.Critical, s.High, s.Medium, s.Low, s.Info, s.Unknown, s.Suppressed)
 }
 
 func countSev(site SiteReport, sev checks.Severity) int {
 	n := 0
 	for _, f := range site.Findings {
-		if f.Status == checks.StatusFailed && f.Severity == sev {
+		if f.Status == checks.StatusFailed && !f.Suppressed && f.Severity == sev {
 			n++
 		}
 	}

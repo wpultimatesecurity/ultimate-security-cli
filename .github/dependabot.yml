@@ -1,0 +1,27 @@
+version: 2
+# Dependency updates for a security tool: the point is to notice a vulnerable
+# or outdated dependency (and a stale Action) without a human remembering to
+# look. Grouped so a Go bump arrives as one reviewable pull request rather
+# than a dozen.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]

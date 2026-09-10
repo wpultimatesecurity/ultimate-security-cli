@@ -14,7 +14,7 @@ PLATFORMS     := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 DIST_DIR      := dist
 
-.PHONY: build test test-race vet fmt fmt-check lint release-local clean help
+.PHONY: build test test-race vet fmt fmt-check lint hygiene fuzz vulncheck integration release-local clean help
 
 build: ## Build wpus for the current platform
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/$(BINARY_NAME)
@@ -27,6 +27,22 @@ test-race: ## Run all tests with the race detector
 
 vet: ## Run go vet
 	go vet ./...
+
+hygiene: ## Verify nothing private, generated, or machine-specific is tracked
+	./scripts/check-public-tree.sh
+
+fuzz: ## Fuzz the parsers that consume hostile input (30s each)
+	go test ./internal/wordpress/ -run=XXX -fuzz=FuzzParseWpConfig -fuzztime=30s
+	go test ./internal/wordpress/ -run=XXX -fuzz=FuzzVersionCompare -fuzztime=30s
+	go test ./internal/wordpress/ -run=XXX -fuzz=FuzzVersionBetween -fuzztime=20s
+	go test ./internal/sanitize/ -run=XXX -fuzz=FuzzSanitizers -fuzztime=30s
+	go test ./internal/redaction/ -run=XXX -fuzz=FuzzScrubber -fuzztime=30s
+
+vulncheck: ## Report vulnerabilities reachable from this code
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+integration: ## End-to-end check of the integrity path against a real WordPress release (needs network)
+	./scripts/integration.sh
 
 fmt: ## Format all code
 	gofmt -w ./cmd ./internal

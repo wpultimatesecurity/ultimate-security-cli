@@ -1,0 +1,50 @@
+name: Release
+
+# Tags only: a release is a human decision (see CONTRIBUTING.md), and the
+# branch model keeps `main` as the released state.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build, attest, and draft the release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload artifacts
+      id-token: write # sign the provenance attestation (OIDC)
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser builds the changelog from history; a shallow clone
+          # would produce an empty one.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # GoReleaser is configured to create a DRAFT release: a bad tag is
+      # fixable before anyone can download from it.
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Signed provenance for every artifact, so a download can be traced back
+      # to this workflow, repository, and commit:
+      #   gh attestation verify wpus_<version>_<os>_<arch>.tar.gz \
+      #     --repo wpultimatesecurity/ultimate-security-cli
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/checksums.txt

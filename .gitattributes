@@ -1,0 +1,41 @@
+# wpus — checkout attributes
+#
+# A public repository is cloned onto Linux, macOS, and Windows (mostly WSL,
+# but native tooling happens too). These rules make a checkout byte-identical
+# everywhere, which matters for a security tool: a diff caused by a stray CR
+# would otherwise show up as a "changed" core file in someone's audit.
+
+# Normalize to LF in the repository and in the working tree.
+* text=auto eol=lf
+
+# Explicit, because these are the files where a CRLF would actually break
+# something (shebangs, CI, and the shell installer).
+*.go        text eol=lf
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.mod       text eol=lf
+*.sum       text eol=lf
+Makefile    text eol=lf
+LICENSE     text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Binary fixtures and archives: never touch their bytes.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+
+# GitHub language statistics: prose is not source code.
+docs/**            linguist-documentation
+CHANGELOG.md       linguist-documentation
+CONTRIBUTING.md    linguist-documentation
+SECURITY.md        linguist-documentation
+LICENSE            linguist-documentation
+testdata/**        linguist-documentation

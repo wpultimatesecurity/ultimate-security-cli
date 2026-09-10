@@ -87,13 +87,55 @@ type Result struct {
 	Note  string `json:"note,omitempty"` // why a path is not a usable installation
 }
 
-// Discover finds WordPress installations.
+// Stats accounts for a discovery run.
+//
+// Discovery stops early on three ceilings — the wall-clock timeout, the
+// visited-directory cap, and the result cap — so "no installations found"
+// is otherwise ambiguous between "none exist" and "the search gave up".
+// These counters let a caller tell the two apart.
+//
+// Directories skipped by the skip list, the hidden-directory rule, or the
+// core-tree rule do not mark the run truncated: skipping them is
+// deliberate scope, not an exhausted budget.
+type Stats struct {
+	// Roots is how many search roots the walk set out from. Roots that do
+	// not exist still count: they were part of the search. Roots on
+	// virtual filesystems are filtered before the count, so they never
+	// appear here.
+	Roots int `json:"roots"`
+	// DirectoriesVisited counts directories the walker entered, including
+	// the roots and directories it then decided to skip.
+	DirectoriesVisited int `json:"directories_visited"`
+	// MaxDepth is the recursion depth applied, after defaulting.
+	MaxDepth int `json:"max_depth"`
+	// Truncated reports whether a ceiling stopped the search early.
+	Truncated bool `json:"truncated"`
+	// TruncationReason names the first ceiling hit: "time",
+	// "max_directories", or "max_results". Empty when Truncated is false.
+	TruncationReason string `json:"truncation_reason,omitempty"`
+}
+
+// Discover finds WordPress installations and returns results only.
 //
 // Explicit paths are walked as seeds (so `wpus scan /var/www` finds the
 // sites inside, while `wpus scan /var/www/site` validates that one).
 // Everything is bounded by timeout, depth, and visited-directory caps.
 // The returned slice is sorted: valid sites first, then by path.
+//
+// Use DiscoverWithStats when the search's completeness matters: a bounded
+// search can stop early, so an empty result slice does not by itself prove
+// there are no installations.
 func Discover(opts Options) []Result {
+	results, _ := DiscoverWithStats(opts)
+	return results
+}
+
+// DiscoverWithStats finds WordPress installations and accounts for the
+// search that produced them.
+//
+// It behaves exactly like Discover but also reports how far the walk got,
+// which ceiling (if any) cut it short, and which one did so first.
+func DiscoverWithStats(opts Options) ([]Result, Stats) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -108,16 +150,30 @@ func Discover(opts Options) []Result {
 	}
 	deadline := time.Now().Add(timeout)
 
+	var stats Stats
+	stats.MaxDepth = depth
+	truncate := func(reason string) {
+		if !stats.Truncated {
+			stats.Truncated = true
+			stats.TruncationReason = reason
+		}
+	}
+
 	roots := opts.Explicit
 	if len(roots) == 0 {
 		roots = autoRoots(opts.Home)
 	}
 	roots = filterVirtual(roots)
+	stats.Roots = len(roots)
 
 	var out []Result
 	seen := map[string]bool{}
 	add := func(r Result) {
-		if seen[r.Path] || len(out) >= maxResults {
+		if seen[r.Path] {
+			return
+		}
+		if len(out) >= maxResults {
+			truncate("max_results")
 			return
 		}
 		seen[r.Path] = true
@@ -127,7 +183,16 @@ func Discover(opts Options) []Result {
 	visited := 0
 	confirmed := map[string]bool{}
 	for _, root := range roots {
-		if len(out) >= maxResults || time.Now().After(deadline) || visited > maxVisitedDirs {
+		if len(out) >= maxResults {
+			truncate("max_results")
+			break
+		}
+		if time.Now().After(deadline) {
+			truncate("time")
+			break
+		}
+		if visited > maxVisitedDirs {
+			truncate("max_directories")
 			break
 		}
 		if _, err := os.Stat(root); err != nil {
@@ -143,12 +208,17 @@ func Discover(opts Options) []Result {
 				}
 				return fs.SkipDir // unreadable subtree — skip quietly
 			}
-			visited++
-			if time.Now().After(deadline) || visited > maxVisitedDirs {
+			if time.Now().After(deadline) {
+				truncate("time")
 				return fs.SkipAll
 			}
 			if !d.IsDir() {
 				return nil
+			}
+			visited++
+			if visited > maxVisitedDirs {
+				truncate("max_directories")
+				return fs.SkipAll
 			}
 			name := d.Name()
 			if path != root && (strings.HasPrefix(name, ".") || skipNames[name]) {
@@ -174,8 +244,9 @@ func Discover(opts Options) []Result {
 			return nil
 		})
 	}
+	stats.DirectoriesVisited = visited
 	sortResults(out)
-	return out
+	return out, stats
 }
 
 // filterVirtual drops roots inside virtual/system filesystems.

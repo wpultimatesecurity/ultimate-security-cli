@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` is the default (integration) branch; `main` carries releases.
+    branches: [main, dev]
   pull_request:
 
 permissions:
@@ -21,12 +22,53 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Fails if a private, generated, or machine-specific file is tracked, or
+      # if a tracked file leaks an absolute developer path.
+      - name: public-tree hygiene
+        run: make hygiene
       - name: gofmt check
         run: test -z "$(gofmt -l ./cmd ./internal)"
       - name: go vet
         run: go vet ./...
       - name: tests
         run: go test -race ./...
+
+  fuzz:
+    name: Fuzz (security-critical parsers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The version comparator is differential-tested against PHP inside the
+      # normal test run; the fuzzers below hunt for panics and invariant
+      # breaks in the parsers that consume hostile input.
+      - name: Fuzz wp-config parser
+        run: go test ./internal/wordpress/ -run=XXX -fuzz=FuzzParseWpConfig -fuzztime=30s
+      - name: Fuzz version comparator
+        run: go test ./internal/wordpress/ -run=XXX -fuzz=FuzzVersionCompare -fuzztime=30s
+      - name: Fuzz range matching
+        run: go test ./internal/wordpress/ -run=XXX -fuzz=FuzzVersionBetween -fuzztime=20s
+      - name: Fuzz report sanitizers
+        run: go test ./internal/sanitize/ -run=XXX -fuzz=FuzzSanitizers -fuzztime=30s
+      - name: Fuzz secret redaction
+        run: go test ./internal/redaction/ -run=XXX -fuzz=FuzzScrubber -fuzztime=30s
+
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Fails only on vulnerabilities reachable from called code, which keeps
+      # the signal actionable instead of a CVE-list dump.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   build:
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -56,3 +98,17 @@ jobs:
           name: wpus-${{ matrix.goos }}-${{ matrix.goarch }}
           path: wpus-*
 
+  integration:
+    name: Integration (scan of a real WordPress release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # End-to-end proof against the real WordPress.org checksum service: a
+      # pristine release verifies clean, and a tampered core file is detected
+      # with its exact path. Runs the same script as `make integration`, so
+      # CI and a local run cannot drift apart.
+      - name: Integrity verification against a real release
+        run: make integration

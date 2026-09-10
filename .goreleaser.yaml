@@ -32,17 +32,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
-brews:
-  - name: wpus
-    repository:
-      owner: wpultimatesecurity
-      name: homebrew-tap
-    directory: Formula
-    homepage: https://github.com/wpultimatesecurity/ultimate-security-cli
-    description: Local, read-only WordPress security auditing for humans and AI agents
-    license: MIT
-    test: |
-      system "#{bin}/wpus version"
+# Homebrew packaging is deliberately absent: GoReleaser deprecated `brews` in
+# favour of casks, and `wpultimatesecurity/homebrew-tap` does not exist yet, so
+# a release would fail while publishing to it. Add a `homebrew_casks` entry and
+# the tap repository together, before the first tag that should ship it.
 
 changelog:
   sort: asc

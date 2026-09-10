@@ -25,16 +25,24 @@ type Site struct {
 	// Config is the statically parsed wp-config.php. Nil if unreadable.
 	Config *WpConfig
 
-	// Content layout.
-	ContentPath  string // <root>/wp-content
-	UploadsPath  string // <root>/wp-content/uploads (may not exist)
-	PluginsPath  string
-	ThemesPath   string
-	IsMultisite  bool
-	MultisiteDir bool // sites/ subdir in uploads (subdir multisite)
+	// Layout records where WordPress actually keeps its content, plugins,
+	// MU plugins, themes and uploads, and whether wp-config.php lives one
+	// directory above the installation. Checks read paths from here.
+	Layout Layout
 
-	Plugins []Plugin
-	Themes  []Theme
+	// Content layout (resolved from the site's configuration, never assumed).
+	ContentPath   string // resolved wp-content directory
+	UploadsPath   string // resolved uploads directory (may not exist)
+	PluginsPath   string
+	ThemesPath    string
+	MuPluginsPath string // resolved MU-plugin directory (may not exist)
+	IsMultisite   bool
+	MultisiteDir  bool // sites/ subdir in uploads (subdir multisite)
+
+	Plugins   []Plugin
+	Themes    []Theme
+	MuPlugins []Plugin // must-use plugins: auto-loaded, never in the plugin list
+	Dropins   []Dropin // files WordPress loads at fixed bootstrap points
 
 	// Enriched data (populated from WP-CLI when available; nil fields mean
 	// "not determined", never "no").
@@ -107,17 +115,29 @@ func Load(path string) (*Site, error) {
 	if err != nil {
 		return nil, err
 	}
+	// wp-config.php may legitimately live one directory above the webroot,
+	// so parse it before resolving any path constant.
+	cfgPath, configParent := findConfig(abs)
+	cfg := ParseWpConfig(cfgPath)
+	layout := resolveLayout(abs, cfg)
+	layout.ConfigPath = cfgPath
+	layout.ConfigParent = configParent
+
 	site := &Site{
-		Path:        abs,
-		ContentPath: filepath.Join(abs, "wp-content"),
-		PluginsPath: filepath.Join(abs, "wp-content", "plugins"),
-		ThemesPath:  filepath.Join(abs, "wp-content", "themes"),
-		UploadsPath: filepath.Join(abs, "wp-content", "uploads"),
+		Path:          abs,
+		Config:        cfg,
+		Layout:        layout,
+		ContentPath:   layout.ContentPath,
+		PluginsPath:   layout.PluginsPath,
+		ThemesPath:    layout.ThemesPath,
+		UploadsPath:   layout.UploadsPath,
+		MuPluginsPath: layout.MuPluginsPath,
 	}
 	site.Version, site.DatabaseVersion = parseVersionFile(filepath.Join(abs, "wp-includes", "version.php"))
-	site.Config = ParseWpConfig(filepath.Join(abs, "wp-config.php"))
 	site.Plugins = LoadPlugins(site.PluginsPath)
 	site.Themes = LoadThemes(site.ThemesPath)
+	site.MuPlugins = LoadMUPlugins(site.MuPluginsPath)
+	site.Dropins = LoadDropins(site.ContentPath)
 	if site.Config != nil {
 		if v, _ := site.Config.Bool("MULTISITE"); v {
 			site.IsMultisite = true

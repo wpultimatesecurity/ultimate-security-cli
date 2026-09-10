@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wpultimatesecurity/ultimate-security-cli/internal/probe"
 )
 
 // --- helpers ---
@@ -89,6 +91,13 @@ func TestRegistryIDs(t *testing.T) {
 		"ADMIN_USERNAME", "PHP_OUTDATED", "PHP_DISPLAY_ERRORS",
 		"DIRECTORY_LISTING", "HTTPS_DISABLED", "REST_USER_ENUMERATION",
 		"XMLRPC_ENABLED",
+		// Integrity and persistence coverage added by the audit remediation.
+		"CORE_INTEGRITY_MODIFIED", "CORE_FILE_MISSING", "CORE_UNEXPECTED_FILE",
+		"PLUGIN_INTEGRITY_MODIFIED", "PLUGIN_INTEGRITY_MISSING_FILE",
+		"PLUGIN_INTEGRITY_EXTRA_FILE", "PLUGIN_CHECKSUM_UNAVAILABLE",
+		"MU_PLUGIN_PRESENT", "DROPIN_PRESENT", "CUSTOM_CONTENT_PATH",
+		"WP_CONFIG_PARENT_LOCATION", "WP_CORE_VULNERABILITY",
+		"BASELINE_DRIFT",
 	}
 	seen := map[string]bool{}
 	for _, c := range All() {
@@ -208,8 +217,8 @@ func TestFileEditorAndMods(t *testing.T) {
 func TestDBPrefix(t *testing.T) {
 	site := testSite(t, map[string]string{"wp-config.php": "<?php\n$table_prefix = 'wp_';\n"})
 	f := findingByID(t, runByID(t, "DEFAULT_DATABASE_PREFIX", ctxFor(site)), "DEFAULT_DATABASE_PREFIX")
-	if f.Status != StatusFailed || f.Severity != SevLow {
-		t.Errorf("wp_ prefix should fail low, got %+v", f)
+	if f.Status != StatusFailed || f.Severity != SevInfo {
+		t.Errorf("wp_ prefix should fail at info severity (policy signal, no score deduction), got %+v", f)
 	}
 	custom := testSite(t, map[string]string{"wp-config.php": "<?php\n$table_prefix = 'x9q_';\n"})
 	if s := statusOf(t, runByID(t, "DEFAULT_DATABASE_PREFIX", ctxFor(custom)), "DEFAULT_DATABASE_PREFIX"); s != StatusPassed {
@@ -396,9 +405,16 @@ func TestRESTUserEnumeration(t *testing.T) {
 	mode = http.StatusOK
 	ctx := ctxFor(site)
 	ctx.Offline = false
-	ctx.HTTP = srv.Client()
-	if f := findingByID(t, runByID(t, "REST_USER_ENUMERATION", ctx), "REST_USER_ENUMERATION"); f.Status != StatusFailed || f.Severity != SevMedium {
-		t.Errorf("open enumeration should fail medium, got %+v", f)
+	ctx.Probe = probe.New(probe.Policy{
+		AllowedOrigins: []string{srv.URL},
+		AllowPrivate:   true, // the test server is on loopback
+		MaxBodyBytes:   1 << 20,
+	})
+	if f := findingByID(t, runByID(t, "REST_USER_ENUMERATION", ctx), "REST_USER_ENUMERATION"); f.Status != StatusFailed || f.Severity != SevLow {
+		t.Errorf("open enumeration should fail low, got %+v", f)
+	}
+	if f := findingByID(t, runByID(t, "REST_USER_ENUMERATION", ctx), "REST_USER_ENUMERATION"); len(f.Occurrences) != 2 {
+		t.Errorf("enumeration should expose one occurrence per user, got %+v", f.Occurrences)
 	}
 
 	// 403 → passed.
@@ -437,8 +453,11 @@ func TestXMLRPC(t *testing.T) {
 	}
 	tr := true
 	ctx.WP = &wpcli.Siteenv{XMLRPC: &tr}
-	if s := statusOf(t, runByID(t, "XMLRPC_ENABLED", ctx), "XMLRPC_ENABLED"); s != StatusFailed {
-		t.Errorf("xmlrpc true should fail (low)")
+	// XML-RPC on is an exposure signal, not a missing control: it must stay
+	// visible without debiting the risk score (docs/checks.md says so).
+	f := findingByID(t, runByID(t, "XMLRPC_ENABLED", ctx), "XMLRPC_ENABLED")
+	if f.Status != StatusFailed || f.Severity != SevInfo {
+		t.Errorf("xmlrpc true should fail at info severity, got %s/%s", f.Status, f.Severity)
 	}
 	fal := false
 	ctx.WP = &wpcli.Siteenv{XMLRPC: &fal}
@@ -546,6 +565,38 @@ func TestSeverityFiltering(t *testing.T) {
 	}
 }
 
+// TestApplyPolicyOverridesAndSuppressions pins the two policy rewrites and the
+// property that a suppressed finding is annotated, never deleted.
+func TestApplyPolicyOverridesAndSuppressions(t *testing.T) {
+	opts := Options{
+		SeverityOverrides: map[string]Severity{"B": SevInfo},
+		Suppressions:      []Suppression{{CheckID: "A", Reason: "accepted risk"}},
+	}
+	findings := []Finding{
+		{ID: "A", Severity: SevHigh, Status: StatusFailed},
+		{ID: "B", Severity: SevMedium, Status: StatusFailed},
+		{ID: "C", Severity: SevHigh, Status: StatusPassed},
+	}
+	got := opts.ApplyPolicy(findings)
+	if len(got) != 3 {
+		t.Fatalf("policy must not drop findings, got %d", len(got))
+	}
+	if got[0].Severity != SevHigh || !got[0].Suppressed || got[0].SuppressionReason != "accepted risk" {
+		t.Errorf("suppression not applied: %+v", got[0])
+	}
+	if got[1].Severity != SevInfo {
+		t.Errorf("severity override not applied: %+v", got[1])
+	}
+	for _, f := range got {
+		if f.Fingerprint == "" {
+			t.Errorf("finding %s has no fingerprint", f.ID)
+		}
+	}
+	if got[2].Suppressed {
+		t.Error("a passed finding must never be marked suppressed")
+	}
+}
+
 func contains(s, sub string) bool {
 	return stringsContains(s, sub)
 }
@@ -557,4 +608,45 @@ func stringsContains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestInformationalPolicySignalsDoNotDeductScore pins the documented
+// recalibration: these checks stay visible as failures but carry info
+// severity, so they cannot move the risk score. A regression that "fixes"
+// them back to low/medium must fail here.
+func TestInformationalPolicySignalsDoNotDeductScore(t *testing.T) {
+	prefixSite := testSite(t, map[string]string{
+		"wp-config.php": "<?php\n$table_prefix = 'wp_';\n",
+	})
+	modsSite := testSite(t, map[string]string{
+		"wp-config.php": "<?php\n// DISALLOW_FILE_MODS deliberately unset\n",
+	})
+	sslSite := testSite(t, map[string]string{
+		"wp-config.php": "<?php\n// FORCE_SSL_ADMIN deliberately unset\n",
+	})
+	// The check only evaluates on an HTTPS site URL, which the app supplies
+	// through Context.BaseURL.
+	sslCtx := ctxFor(sslSite)
+	sslCtx.BaseURL = "https://example.com"
+	cases := []struct {
+		id  string
+		ctx *Context
+	}{
+		{"DEFAULT_DATABASE_PREFIX", ctxFor(prefixSite)},
+		{"FILE_MODS_ALLOWED", ctxFor(modsSite)},
+		{"FORCE_SSL_ADMIN_DISABLED", sslCtx},
+	}
+	for _, tc := range cases {
+		f := findingByID(t, runByID(t, tc.id, tc.ctx), tc.id)
+		if f.Status != StatusFailed {
+			t.Errorf("%s should still report the state, got %s", tc.id, f.Status)
+			continue
+		}
+		if f.Severity != SevInfo {
+			t.Errorf("%s should be informational (no score deduction), got %s", tc.id, f.Severity)
+		}
+		if f.Severity.Weight() != 0 {
+			t.Errorf("%s carries weight %d; informational checks must not deduct", tc.id, f.Severity.Weight())
+		}
+	}
 }
