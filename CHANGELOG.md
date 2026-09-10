@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CI on a fresh checkout
+
+- The PHP differential test compared against whatever PHP the machine had.
+  PHP 8.4 changed `version_compare()`'s canonicalization (trailing dot now
+  stripped, php-src `ext/standard/versioning.c`), which is the semantics this
+  port implements, so the comparison failed on the older PHP shipped with the
+  Linux runner. The test now states its baseline: it skips with that reason on
+  PHP < 8.4, the divergent inputs are pinned in `TestVersionCompare` on every
+  PHP, and CI installs PHP 8.4 to run the comparison.
+- CI and release builds pinned the patch release named in `go.mod`
+  (Go 1.25.0), so `govulncheck` failed on 25 known standard-library
+  vulnerabilities that later patches fix. Builds now use the current stable
+  toolchain, and a new `minimum-go` job keeps the declared Go floor working.
+
 ### Added — public repository setup
 
 - Branch model: `dev` is the default (integration) branch, `main` carries

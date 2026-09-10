@@ -24,17 +24,50 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # A current patched toolchain, not the patch release named in go.mod:
+          # the toolchain's standard library is part of the attack surface, and
+          # govulncheck reports its known vulnerabilities.
+          go-version: stable
       # Fails if a private, generated, or machine-specific file is tracked, or
       # if a tracked file leaks an absolute developer path.
       - name: public-tree hygiene
         run: make hygiene
+      # The version comparator is differential-tested against PHP; the pinned
+      # semantics are PHP 8.4+ (see internal/wordpress/version_test.go), and
+      # the runner's preinstalled PHP is older, which would skip the
+      # comparison. Install a PHP that can actually verify the port.
+      - name: Set up PHP (differential version-comparator test)
+        if: runner.os == 'Linux'
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: "8.4"
+          coverage: none
       - name: gofmt check
         run: test -z "$(gofmt -l ./cmd ./internal)"
       - name: go vet
         run: go vet ./...
       - name: tests
         run: go test -race ./...
+
+  minimum-go:
+    name: Minimum declared Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # The floor declared in go.mod, so the documented minimum keeps
+          # working even though the other jobs build with the latest Go.
+          go-version-file: go.mod
+      - name: build, vet, and test with the minimum Go
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
 
   fuzz:
     name: Fuzz (security-critical parsers)
@@ -43,7 +76,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # A current patched toolchain, not the patch release named in go.mod:
+          # the toolchain's standard library is part of the attack surface, and
+          # govulncheck reports its known vulnerabilities.
+          go-version: stable
       # The version comparator is differential-tested against PHP inside the
       # normal test run; the fuzzers below hunt for panics and invariant
       # breaks in the parsers that consume hostile input.
@@ -65,7 +101,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # A current patched toolchain, not the patch release named in go.mod:
+          # the toolchain's standard library is part of the attack surface, and
+          # govulncheck reports its known vulnerabilities.
+          go-version: stable
       # Fails only on vulnerabilities reachable from called code, which keeps
       # the signal actionable instead of a CVE-list dump.
       - name: govulncheck
@@ -88,7 +127,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # A current patched toolchain, not the patch release named in go.mod:
+          # the toolchain's standard library is part of the attack surface, and
+          # govulncheck reports its known vulnerabilities.
+          go-version: stable
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -108,7 +150,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # A current patched toolchain, not the patch release named in go.mod:
+          # the toolchain's standard library is part of the attack surface, and
+          # govulncheck reports its known vulnerabilities.
+          go-version: stable
       # End-to-end proof against the real WordPress.org checksum service: a
       # pristine release verifies clean, and a tampered core file is detected
       # with its exact path. Runs the same script as `make integration`, so

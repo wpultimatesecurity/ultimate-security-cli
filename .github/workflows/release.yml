@@ -28,7 +28,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          # Release artifacts are built with a current patched toolchain: the
+          # Go standard library ships inside the binary, so its vulnerabilities
+          # ship with it.
+          go-version: stable
 
       # GoReleaser is configured to create a DRAFT release: a bad tag is
       # fixable before anyone can download from it.

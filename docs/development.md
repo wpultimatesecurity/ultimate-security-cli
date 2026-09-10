@@ -2,7 +2,9 @@
 
 ## Requirements
 
-- Go 1.25+ (`brew install go`)
+- Go 1.25+ (`brew install go`). CI builds with the current stable toolchain
+  (the standard library is part of the shipped binary, so patch releases
+  matter) and a `minimum-go` job keeps the declared floor working.
 - GNU make (or run the recipes manually)
 - Optional: PHP on `PATH` for the differential version-comparator test
   (`brew install php` on macOS, `apt-get install php-cli` on Debian/Ubuntu).
@@ -100,6 +102,14 @@ go test ./internal/wordpress/ -run TestVersionCompareMatchesPHP -v
 
 Without PHP on `PATH` the test skips with a clear message; the pure-Go cases
 still run.
+
+The comparison requires **PHP 8.4 or newer**. PHP 8.4 changed
+`version_compare()`'s canonicalization (a trailing dot is now stripped, see
+php-src `ext/standard/versioning.c`), which is the semantics this port
+implements; older versions order degenerate inputs such as `1.0 ` differently.
+On an older PHP the corpus comparison skips with that reason, and the pinned
+cases in `TestVersionCompare` — including the divergent inputs — still run.
+CI installs PHP 8.4 on Linux so the comparison is exercised on every change.
 
 ### Documentation consistency
 
