@@ -197,6 +197,11 @@ Branch model: `dev` is the default (integration) branch, `main` holds released
 states, and tags are cut from `main`. CI runs on pushes to both and on every
 pull request.
 
+Actions policy: every `uses:` is pinned to a commit SHA (Dependabot keeps the
+pins current), the workflow token defaults to read-only, and the repository
+rejects tag-pinned actions. Workflows request the permissions they need
+explicitly — see the `permissions:` block in `release.yml`.
+
 ## Dependency licenses
 
 Runtime dependencies (kept deliberately minimal):

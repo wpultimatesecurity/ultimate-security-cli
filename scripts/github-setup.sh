@@ -79,7 +79,29 @@ else
 	pending "secret scanning needs a public repository (or GHAS); re-run after publishing"
 fi
 
-# --- 3. Default branch ------------------------------------------------------
+# --- 3. Actions policy ------------------------------------------------------
+# Workflows in this repository pin every action to a commit SHA; the setting
+# below makes that a rule rather than a convention, and the default token is
+# read-only so a workflow has to ask for the permissions it needs.
+log "hardening Actions: SHA-pinned actions, read-only default token"
+gh api -X PUT "repos/$REPO/actions/permissions" \
+	-F enabled=true -f allowed_actions=all -F sha_pinning_required=true >/dev/null
+gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
+	-f default_workflow_permissions=read -F can_approve_pull_request_reviews=false >/dev/null
+
+# Auto-merge is an organization-level toggle; the API accepts the request but
+# the effective value stays false while the organization has it disabled.
+if [ "$(gh api "repos/$REPO" --jq '.allow_auto_merge')" != "true" ]; then
+	if gh api -X PATCH "repos/$REPO" -F allow_auto_merge=true >/dev/null 2>&1 &&
+		[ "$(gh api "repos/$REPO" --jq '.allow_auto_merge')" = "true" ]; then
+		log "auto-merge enabled"
+	else
+		pending "auto-merge is disabled by an organization policy (Org settings → Repository → Allow auto-merge)"
+	fi
+fi
+gh api -X PATCH "repos/$REPO" -F allow_update_branch=true >/dev/null
+
+# --- 4. Default branch ------------------------------------------------------
 if git ls-remote --exit-code --heads origin "$DEFAULT_BRANCH" >/dev/null 2>&1 ||
 	gh api "repos/$REPO/branches/$DEFAULT_BRANCH" >/dev/null 2>&1; then
 	log "setting default branch to $DEFAULT_BRANCH"
@@ -88,7 +110,7 @@ else
 	pending "push $DEFAULT_BRANCH first:  git push -u origin $DEFAULT_BRANCH"
 fi
 
-# --- 4. Branch protection ---------------------------------------------------
+# --- 5. Branch protection ---------------------------------------------------
 # Status-check contexts are job names as GitHub reports them (the matrix
 # expands into one check per combination). A name that does not match leaves a
 # pull request waiting, so the list is printed for review.
@@ -133,7 +155,17 @@ protect() {
 protect "$DEFAULT_BRANCH"
 protect "$RELEASE_BRANCH"
 
-# --- 5. Visibility (explicit) ----------------------------------------------
+# --- 6. Code scanning -------------------------------------------------------
+# CodeQL default setup is free on public repositories and needs GitHub Advanced
+# Security on private ones.
+if gh api "repos/$REPO/code-scanning/default-setup" >/dev/null 2>&1 &&
+	gh api -X PATCH "repos/$REPO/code-scanning/default-setup" -f state=configured -f query_suite=default >/dev/null 2>&1; then
+	log "CodeQL default setup enabled"
+else
+	pending "code scanning needs a public repository (or GHAS); re-run after publishing"
+fi
+
+# --- 7. Visibility (explicit) ----------------------------------------------
 if [ "$PUBLIC" = yes ]; then
 	log "making $REPO public"
 	gh repo edit "$REPO" --visibility public --accept-visibility-change-consequences

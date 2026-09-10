@@ -85,6 +85,10 @@ The repository is public and stays publishable:
 - `make hygiene` enforces it: it fails when a private, generated, or
   machine-specific file is tracked, or when a tracked file leaks an absolute
   developer path. CI runs it on every change, so the rules cannot rot.
+- GitHub Actions are pinned to a commit SHA (with the tag in a trailing
+  comment for Dependabot), and the repository requires SHA pinning: a
+  tag-pinned action is rejected, because this repository publishes attested
+  artifacts and the workflow that builds them must be reproducible.
 - Because ignore rules do not apply to files that are already tracked, remove
   such a file from the index (`git rm --cached`) as well as from `.gitignore`.
 

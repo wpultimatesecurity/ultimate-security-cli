@@ -21,6 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   release would otherwise fail while publishing to a missing tap.
 - Issue forms (bug report, feature/check request), a pull request template,
   and Dependabot configuration for Go modules and GitHub Actions.
+- Every action pinned to a commit SHA (with the tag in a trailing comment for
+  Dependabot), enforced by the repository's SHA-pinning requirement, and the
+  default workflow token reduced to read-only with no PR-approval rights.
 - `scripts/github-setup.sh`: idempotent `gh` configuration for description,
   topics, repository features, vulnerability alerts and automated security
   fixes, secret scanning, default branch, and branch protection. Steps that
