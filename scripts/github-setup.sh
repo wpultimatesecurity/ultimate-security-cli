@@ -110,69 +110,103 @@ else
 	pending "push $DEFAULT_BRANCH first:  git push -u origin $DEFAULT_BRANCH"
 fi
 
-# --- 5. Branch protection ---------------------------------------------------
-# Status-check contexts are job names as GitHub reports them (the matrix
-# expands into one check per combination). A name that does not match leaves a
-# pull request waiting, so the list is printed for review.
-protect() {
-	branch="$1"
-	if ! gh api "repos/$REPO/branches/$branch" >/dev/null 2>&1; then
-		pending "branch $branch does not exist on the remote yet; protection not applied"
-		return 0
-	fi
-	log "protecting $branch (no force pushes, no deletions, CI required)"
-	if ! out=$(gh api -X PUT "repos/$REPO/branches/$branch/protection" \
-		-H "Accept: application/vnd.github+json" \
-		-F 'required_status_checks[strict]=false' \
-		-f 'required_status_checks[contexts][]=Test (ubuntu-latest)' \
-		-f 'required_status_checks[contexts][]=Test (macos-latest)' \
-		-f 'required_status_checks[contexts][]=Fuzz (security-critical parsers)' \
-		-f 'required_status_checks[contexts][]=govulncheck' \
-		-f 'required_status_checks[contexts][]=Integration (scan of a real WordPress release)' \
-		-f 'required_status_checks[contexts][]=Build linux-amd64' \
-		-f 'required_status_checks[contexts][]=Build linux-arm64' \
-		-f 'required_status_checks[contexts][]=Build darwin-amd64' \
-		-f 'required_status_checks[contexts][]=Build darwin-arm64' \
-		-F 'enforce_admins=false' \
-		-F 'required_pull_request_reviews=' \
-		-F 'restrictions=' \
-		-F 'allow_force_pushes=false' \
-		-F 'allow_deletions=false' 2>&1); then
-		case "$out" in
-		*"Upgrade to GitHub Pro"* | *"make this repository public"*)
-			# Branch protection on a private repository needs a paid plan;
-			# on a public one it is free.
-			pending "branch protection for $branch needs a public repository (or a paid plan); re-run after publishing"
-			;;
-		*)
-			printf '%s\n' "github-setup: could not protect $branch: $out" >&2
-			return 1
-			;;
-		esac
-	fi
+# --- 5. Branch ruleset ------------------------------------------------------
+# Rulesets are the current mechanism (classic branch protection is legacy).
+# The rules are chosen so that a maintainer who pushes directly still can:
+# "non_fast_forward" and "deletion" block history rewrites and deletions, while
+# "required_status_checks" gates pull-request merges on CI. There are no bypass
+# actors — with the caveat GitHub documents, that also prevents renaming or
+# changing the default branch until this ruleset is edited.
+RULESET_NAME="protect-integration-and-release-branches"
+
+ruleset_body() {
+	cat <<JSON
+{
+  "name": "$RULESET_NAME",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
+        "required_status_checks": [
+          { "context": "Test (ubuntu-latest)" },
+          { "context": "Test (macos-latest)" },
+          { "context": "Minimum declared Go (ubuntu-latest)" },
+          { "context": "Minimum declared Go (macos-latest)" },
+          { "context": "Fuzz (security-critical parsers)" },
+          { "context": "govulncheck" },
+          { "context": "Integration (scan of a real WordPress release)" },
+          { "context": "Build linux-amd64" },
+          { "context": "Build linux-arm64" },
+          { "context": "Build darwin-amd64" },
+          { "context": "Build darwin-arm64" }
+        ]
+      }
+    }
+  ]
+}
+JSON
 }
 
-protect "$DEFAULT_BRANCH"
-protect "$RELEASE_BRANCH"
+apply_ruleset() {
+	tmp="$(mktemp)"
+	ruleset_body >"$tmp"
+	id="$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$RULESET_NAME\") | .id" 2>/dev/null | head -1)"
+	if [ -n "$id" ]; then
+		log "updating ruleset $RULESET_NAME (#$id)"
+		gh api -X PUT "repos/$REPO/rulesets/$id" --input "$tmp" >/dev/null
+	else
+		log "creating ruleset $RULESET_NAME"
+		gh api -X POST "repos/$REPO/rulesets" --input "$tmp" >/dev/null
+	fi
+	rm -f "$tmp"
+}
+
+if gh api "repos/$REPO/branches/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+	apply_ruleset
+	log "effective rules on $DEFAULT_BRANCH: $(gh api "repos/$REPO/rules/branches/$DEFAULT_BRANCH" --jq '[.[].type] | join(", ")')"
+else
+	pending "branch $DEFAULT_BRANCH does not exist on the remote yet; no ruleset applied"
+fi
 
 # --- 6. Code scanning -------------------------------------------------------
 # CodeQL default setup is free on public repositories and needs GitHub Advanced
 # Security on private ones.
-if gh api "repos/$REPO/code-scanning/default-setup" >/dev/null 2>&1 &&
-	gh api -X PATCH "repos/$REPO/code-scanning/default-setup" -f state=configured -f query_suite=default >/dev/null 2>&1; then
+if gh api -X PATCH "repos/$REPO/code-scanning/default-setup" -f state=configured -f query_suite=default >/dev/null 2>&1; then
 	log "CodeQL default setup enabled"
 else
 	pending "code scanning needs a public repository (or GHAS); re-run after publishing"
 fi
 
+# Reporters must be able to reach the maintainers privately (SECURITY.md
+# points at GitHub's advisory form).
+if gh api -X PUT "repos/$REPO/private-vulnerability-reporting" >/dev/null 2>&1; then
+	log "private vulnerability reporting enabled"
+else
+	pending "private vulnerability reporting could not be enabled"
+fi
+
 # --- 7. Visibility (explicit) ----------------------------------------------
-if [ "$PUBLIC" = yes ]; then
+visibility="$(gh api "repos/$REPO" --jq '.visibility')"
+if [ "$PUBLIC" = yes ] && [ "$visibility" != "public" ]; then
 	log "making $REPO public"
 	gh repo edit "$REPO" --visibility public --accept-visibility-change-consequences
-	log "re-running secret scanning setup for the public repository"
-	gh api -X PATCH "repos/$REPO" \
-		-f 'security_and_analysis[secret_scanning][status]=enabled' \
-		-f 'security_and_analysis[secret_scanning_push_protection][status]=enabled' >/dev/null || true
+	visibility=public
+fi
+if [ "$visibility" = "public" ]; then
+	log "repository is public"
 else
 	pending "visibility is still private; publish with:  scripts/github-setup.sh --public"
 fi
