@@ -140,6 +140,25 @@ The integration job is the end-to-end proof of the flagship path against the
 real WordPress.org checksum service; it is not run by `make test` (run it with
 `make integration`).
 
+## Repository settings
+
+`scripts/github-setup.sh` configures the GitHub side with `gh`: description,
+topics, issue/wiki/project toggles, delete-branch-on-merge, vulnerability
+alerts and automated security fixes, secret scanning, the default branch, and
+branch protection for `dev` and `main`. It is idempotent and reports steps that
+cannot run yet as `PENDING` with the reason — a private repository on a free
+plan, for instance, gets no branch protection, and the default branch cannot
+be changed before `dev` exists on the remote.
+
+```bash
+scripts/github-setup.sh              # everything except visibility
+scripts/github-setup.sh --public     # also flip visibility (one-way door)
+```
+
+Making a repository public cannot be undone (forks and caches keep the
+content), which is why it takes an explicit flag and is done by a human after
+`make hygiene` passes.
+
 ## Versioning
 
 - `internal/version` holds build identity; release builds inject values via

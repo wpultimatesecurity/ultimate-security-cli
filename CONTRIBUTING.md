@@ -97,6 +97,11 @@ The repository is public and stays publishable:
 - Work happens on short-lived topic branches off `dev`, merged back with a pull
   request. Nothing is pushed directly to `main`.
 
+Maintainers configure the repository's GitHub settings with
+`scripts/github-setup.sh` (idempotent, reports anything it cannot do yet).
+Branch protection and secret scanning require a public repository or a paid
+plan, so those steps complete after publication.
+
 ## Pull requests
 
 - Branch from `dev`; keep commits tidy (`feat:`, `fix:`, `docs:`, `chore:`).

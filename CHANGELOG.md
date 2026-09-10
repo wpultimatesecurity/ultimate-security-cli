@@ -21,6 +21,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   release would otherwise fail while publishing to a missing tap.
 - Issue forms (bug report, feature/check request), a pull request template,
   and Dependabot configuration for Go modules and GitHub Actions.
+- `scripts/github-setup.sh`: idempotent `gh` configuration for description,
+  topics, repository features, vulnerability alerts and automated security
+  fixes, secret scanning, default branch, and branch protection. Steps that
+  need a published repository are reported as `PENDING` with the reason, and
+  the visibility change is behind an explicit `--public` flag because it
+  cannot be undone.
 
 ### Added — repository hygiene for public release
 
