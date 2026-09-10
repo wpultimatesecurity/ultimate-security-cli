@@ -110,37 +110,23 @@ else
 	pending "push $DEFAULT_BRANCH first:  git push -u origin $DEFAULT_BRANCH"
 fi
 
-# --- 5. Branch ruleset ------------------------------------------------------
-# Rulesets are the current mechanism (classic branch protection is legacy).
-# The rules are chosen so that a maintainer who pushes directly still can:
-# "non_fast_forward" and "deletion" block history rewrites and deletions, while
-# "required_status_checks" gates pull-request merges on CI. There are no bypass
-# actors — with the caveat GitHub documents, that also prevents renaming or
-# changing the default branch until this ruleset is edited.
-RULESET_NAME="protect-integration-and-release-branches"
-
-ruleset_body() {
-	cat <<JSON
-{
-  "name": "$RULESET_NAME",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"],
-      "exclude": []
-    }
-  },
-  "bypass_actors": [],
-  "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "strict_required_status_checks_policy": false,
-        "do_not_enforce_on_create": true,
-        "required_status_checks": [
+# --- 5. Branch rulesets -----------------------------------------------------
+# Two rulesets, because the rules have different audiences:
+#
+#   protect-branch-history   deletion + non_fast_forward, NO bypass. Applies to
+#                            everyone, including admins: history cannot be
+#                            rewritten or deleted by accident.
+#   require-ci-checks        required_status_checks, bypassed by organization
+#                            admins. Required status checks are enforced on
+#                            pushes as well as merges, so without a bypass
+#                            actor a maintainer cannot push to the branch at
+#                            all (see the push rejection this script was
+#                            written to fix). Contributors still cannot merge
+#                            a pull request until CI passes.
+#
+# Note that blocking force pushes (per the GitHub docs) also prevents renaming
+# or changing the default branch until protect-branch-history is edited.
+CI_CHECKS_JSON='[
           { "context": "Test (ubuntu-latest)" },
           { "context": "Test (macos-latest)" },
           { "context": "Minimum declared Go (ubuntu-latest)" },
@@ -152,7 +138,36 @@ ruleset_body() {
           { "context": "Build linux-arm64" },
           { "context": "Build darwin-amd64" },
           { "context": "Build darwin-arm64" }
-        ]
+]'
+
+history_ruleset() {
+	cat <<JSON
+{
+  "name": "protect-branch-history",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [ { "type": "deletion" }, { "type": "non_fast_forward" } ]
+}
+JSON
+}
+
+checks_ruleset() {
+	cat <<JSON
+{
+  "name": "require-ci-checks",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/$DEFAULT_BRANCH", "refs/heads/$RELEASE_BRANCH"], "exclude": [] } },
+  "bypass_actors": [ { "actor_type": "OrganizationAdmin", "bypass_mode": "always" } ],
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
+        "required_status_checks": $CI_CHECKS_JSON
       }
     }
   ]
@@ -161,22 +176,29 @@ JSON
 }
 
 apply_ruleset() {
-	tmp="$(mktemp)"
-	ruleset_body >"$tmp"
-	id="$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$RULESET_NAME\") | .id" 2>/dev/null | head -1)"
+	name="$1"
+	body="$(mktemp)"
+	"$2" >"$body"
+	id="$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$name\") | .id" 2>/dev/null | head -1)"
 	if [ -n "$id" ]; then
-		log "updating ruleset $RULESET_NAME (#$id)"
-		gh api -X PUT "repos/$REPO/rulesets/$id" --input "$tmp" >/dev/null
+		log "updating ruleset $name (#$id)"
+		gh api -X PUT "repos/$REPO/rulesets/$id" --input "$body" >/dev/null
 	else
-		log "creating ruleset $RULESET_NAME"
-		gh api -X POST "repos/$REPO/rulesets" --input "$tmp" >/dev/null
+		log "creating ruleset $name"
+		gh api -X POST "repos/$REPO/rulesets" --input "$body" >/dev/null
 	fi
-	rm -f "$tmp"
+	rm -f "$body"
 }
 
 if gh api "repos/$REPO/branches/$DEFAULT_BRANCH" >/dev/null 2>&1; then
-	apply_ruleset
+	apply_ruleset protect-branch-history history_ruleset
+	apply_ruleset require-ci-checks checks_ruleset
 	log "effective rules on $DEFAULT_BRANCH: $(gh api "repos/$REPO/rules/branches/$DEFAULT_BRANCH" --jq '[.[].type] | join(", ")')"
+	# The list endpoint omits current_user_can_bypass; read each ruleset.
+	bypass="$(gh api "repos/$REPO/rulesets" --jq '.[].id' | while read -r id; do
+		gh api "repos/$REPO/rulesets/$id" --jq '"\(.name)=\(.current_user_can_bypass)"'
+	done | tr '\n' ' ')"
+	log "bypass for the current user: $bypass"
 else
 	pending "branch $DEFAULT_BRANCH does not exist on the remote yet; no ruleset applied"
 fi
